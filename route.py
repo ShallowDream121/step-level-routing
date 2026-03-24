@@ -9,6 +9,13 @@ from lm_eval.api.registry import register_model
 from tqdm import tqdm
 from transformers import AutoTokenizer 
 
+SYSTEM_PROMPT = (
+    "You are a reasoning assistant. You must solve the problem step by step. "
+    "CRITICAL REQUIREMENT: After completing EACH logical step, you MUST output the tag '</step>' on a new line. "
+    "Do not output the final answer until you have gone through all necessary steps. "
+    "Example format:\n<think>\nStep 1 analysis...\n</step>\nStep 2 calculation...\n</step>\n...<think>\nFinal Answer."
+)
+
 @register_model("vllm_router")
 class VLLMRouter(LM):
     def __init__(
@@ -31,21 +38,21 @@ class VLLMRouter(LM):
         self.max_gen_tokens = max_gen_tokens
         self.step_tag = step_tag
 
-        print(f"正在加载小模型 Tokenizer...")
+        self.system_prompt = SYSTEM_PROMPT
+
+        print(f"🚀 正在加载小模型 Tokenizer ({small_model_name})...")
         self.tokenizer_small = AutoTokenizer.from_pretrained(
             small_model_name,
             trust_remote_code=True 
         )
-
         if self.tokenizer_small.pad_token is None:
             self.tokenizer_small.pad_token = self.tokenizer_small.eos_token
 
-        print(f"正在加载大模型 Tokenizer...")
+        print(f"🚀 正在加载大模型 Tokenizer ({large_model_name})...")
         self.tokenizer_large = AutoTokenizer.from_pretrained(
             large_model_name,
             trust_remote_code=True
         )
-
         if self.tokenizer_large.pad_token is None:
             self.tokenizer_large.pad_token = self.tokenizer_large.eos_token
             
@@ -109,71 +116,86 @@ class VLLMRouter(LM):
             if not token_logprobs:
                 continue
             if isinstance(token_logprobs, dict):
-                info = next(iter(token_logprobs.values()), None)
+                # 适配 vLLM 返回格式：可能是 {token_id: {logprob: ...}} 或列表
+                info = next(iter(token_logprobs.values()), None) if token_logprobs else None
                 if info and isinstance(info, dict) and "logprob" in info:
                     logprob = info["logprob"]
                     if logprob is not None:
                         probs.append(math.exp(logprob))
+                # 适配另一种常见格式：直接是 logprob 值
+                elif isinstance(token_logprobs, (int, float)):
+                    probs.append(math.exp(token_logprobs))
 
         if not probs:
             return 0.0
         
-        # 置信度定义为所有 token 中最大概率的平均值
         return sum(probs) / len(probs)
+    
+    def _apply_chat_template(
+        self, 
+        messages: List[Dict[str, str]],
+        model_type: str = "small", 
+        add_generation_prompt:bool = True
+    ) -> str:
+
+        tokenizer = self.tokenizer_small if model_type == "small" else self.tokenizer_large
+        model_name = "小模型" if model_type == "small" else "大模型"
+        
+        try:
+            prompt = tokenizer.apply_chat_template(
+                messages, 
+                tokenize=False, 
+                add_generation_prompt=add_generation_prompt
+            )
+            return prompt
+        except Exception as e:
+            print(f"⚠️ [{model_name}] 应用聊天模板失败: {e}。回退到纯文本拼接。")
+            text = ""
+            for msg in messages:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                text += f"{role}: {content}\n"
+            text += "assistant: "
+            return text
 
     def _decode_tokens(self, token_ids: List[int], model_type: str = "small", skip_special_tokens: bool = True) -> str:
-        if model_type == "small":
-            tokenizer = self.tokenizer_small
-        elif model_type == "large":
-            tokenizer = self.tokenizer_large
-        else:
-            raise ValueError(f"无效的 model_type: '{model_type}'。必须是 'small' 或 'large'。")
-        
+        tokenizer = self.tokenizer_small if model_type == "small" else self.tokenizer_large
         if not token_ids:
             return ""
         return tokenizer.decode(token_ids, skip_special_tokens=skip_special_tokens)
 
-    def _run_speculative_routing(self, prompt: str) -> str:
-        """
-        核心逻辑：
-        1. 小模型生成 -> 无论置信度高低，都将生成的 Token 拼接到 current_token_ids。
-        2. 若置信度低 -> 标记 next_step_use_large = True。
-        3. 下一轮循环 -> 检测到标记，直接调用大模型进行 Prefill + 生成。
-        4. 统计：所有小模型生成的都计入 small_tokens，所有大模型生成的都计入 large_tokens。
-        """
-
-        input_ids = self.tokenizer_small.encode(prompt, add_special_tokens=False)
-        
-        current_token_ids = list(input_ids)
-        source_flags = [0] * len(input_ids)  # 0: Small, 1: Large
+    def _run_speculative_routing(self, messages: List[Dict[str, str]], stop_sequences: List[str]) -> str:
+        conversation_history = list(messages)
+        all_generated_segments = [] 
         
         max_steps = 20
         step_count = 0
-        global_stop_sequences = [self.step_tag] + ["</s>", "<|eot_id|>", "\n\nUser:", "User:"]
-        step_stops = [self.step_tag] + global_stop_sequences
-        
         force_large_model_this_step = False 
 
         while step_count < max_steps:
             current_step = step_count + 1
-            
             use_large_model = force_large_model_this_step
             force_large_model_this_step = False
-
-            generated_segment_ids = []
+            current_model_type = "large" if use_large_model else "small"
+            
+            # 1. 动态渲染 Prompt
+            current_prompt_text = self._apply_chat_template(
+                conversation_history, 
+                model_type=current_model_type, 
+                add_generation_prompt=True
+            )
+            
             generated_text = ""
-            current_source_flag = 0 # 默认小模型
+            new_token_ids = []
+            tokenizer_used = self.tokenizer_large if use_large_model else self.tokenizer_small
 
             # ================= 分支 A: 小模型执行 =================
             if not use_large_model:
-                current_source_flag = 0
-                len_before = len(current_token_ids)
-                
                 small_res = self._call_vllm_api(
                     url=self.small_url,
-                    prompt_token_ids=current_token_ids, # vLLM 内部会用 small_model 的 tokenizer encode
+                    prompt_text=current_prompt_text,
                     max_tokens=self.max_step_tokens,
-                    stop_sequences=step_stops,
+                    stop_sequences=stop_sequences,
                     get_logprobs=True,
                     temperature=0.7
                 )
@@ -182,44 +204,46 @@ class VLLMRouter(LM):
                     output_data = small_res.get("outputs", [{}])[0] if "outputs" in small_res else small_res
                     generated_text = output_data.get("text", "")
                     
-                    # 【关键】获取小模型生成的 Token IDs
                     new_token_ids = output_data.get("token_ids", None)
-                    if new_token_ids is None:
-                        # 兜底：如果没有返回 IDs，必须用【小模型】tokenizer 编码
+                    if new_token_ids is None and generated_text:
                         new_token_ids = self.tokenizer_small.encode(generated_text, add_special_tokens=False)
                     
                     logprobs_raw = output_data.get("logprobs", [])
                     confidence = self._calculate_confidence(logprobs_raw)
-                    generated_segment_ids = new_token_ids
                     
-                    # 更新并行数组
-                    current_token_ids.extend(generated_segment_ids)
-                    source_flags.extend([0] * len(generated_segment_ids)) # 标记为 0
-                    
-                    self.stats["tokens_generated_by_small"] += len(generated_segment_ids)
-                    
-                    print(f"   [Step {current_step}] 🟢 小模型生成 (置信度: {confidence:.2f}) -> 采纳 {len(generated_segment_ids)} tokens")
+                    if new_token_ids:
+                        all_generated_segments.append({
+                            "ids": new_token_ids,
+                            "source": 0,
+                            "text": generated_text
+                        })
+                        self.stats["tokens_generated_by_small"] += len(new_token_ids)
+                        print(f"   [Step {current_step}] 🟢 小模型生成 (置信度: {confidence:.2f}) -> {len(new_token_ids)} tokens")
 
-                    if confidence < self.confidence_threshold:
-                        print(f"   ⚠️ 置信度低，标记 *下一步* 切换到大模型。")
-                        force_large_model_this_step = True
-                        
+                        if confidence < self.confidence_threshold:
+                            print(f"   ⚠️ 置信度低，标记 *下一步* 切换到大模型。")
+                            force_large_model_this_step = True
+                    else:
+                         print(f"   ❌ 小模型未生成有效内容。")
+                         force_large_model_this_step = True
                 else:
-                    print(f"   ❌ 小模型调用失败，标记 *下一步* 切换到大模型。")
+                    print(f"   ❌ 小模型调用失败。")
                     force_large_model_this_step = True
 
             # ================= 分支 B: 大模型执行 =================
             else:
-                current_source_flag = 1
                 self.stats["fallback_to_large"] += 1
                 print(f"   [Step {current_step}] 🔴 触发大模型 (原因: 上一步低置信度/失败)")
                 
+                ctx_ids = self.tokenizer_large.apply_chat_template(conversation_history, tokenize=True, add_generation_prompt=False)
+                self.stats["prefill_tokens_count"] += len(ctx_ids)
+                
                 large_res = self._call_vllm_api(
                     url=self.large_url,
-                    prompt_token_ids=current_token_ids, # vLLM 内部会用 large_model 的 tokenizer encode
+                    prompt_text=current_prompt_text,
                     max_tokens=self.max_step_tokens,
-                    stop_sequences=step_stops,
-                    get_logprobs=False, # 大模型通常不需要 logprobs 除非做验证
+                    stop_sequences=stop_sequences,
+                    get_logprobs=False,
                     temperature=0.7
                 )
                 
@@ -227,82 +251,60 @@ class VLLMRouter(LM):
                     output_data = large_res.get("outputs", [{}])[0] if "outputs" in large_res else large_res
                     generated_text = output_data.get("text", "")
                     
-                    # 【关键】获取大模型生成的 Token IDs
-                    # 注意：这里的 ID 是基于大模型词表的！
                     new_token_ids = output_data.get("token_ids", None)
-                    if new_token_ids is None:
-                        # 兜底：必须用【大模型】tokenizer 编码，绝不能用 small!
-                        if hasattr(self, 'tokenizer_large'):
-                            new_token_ids = self.tokenizer_large.encode(generated_text, add_special_tokens=False)
-                        else:
-                            # 如果没加载大模型 tokenizer，这是一个严重配置错误，尝试回退或报错
-                            raise RuntimeError("Large model returned no token_ids and large tokenizer is not loaded.")
+                    if new_token_ids is None and generated_text:
+                        new_token_ids = self.tokenizer_large.encode(generated_text, add_special_tokens=False)
                     
-                    # 更新并行数组
-                    current_token_ids.extend(new_token_ids)
-                    source_flags.extend([1] * len(new_token_ids)) # 标记为 1
-                    
-                    # 计算置信度 (如果有 logprobs)
-                    logprobs_raw = output_data.get("logprobs", [])
-                    if logprobs_raw:
-                        confidence = self._calculate_confidence(logprobs_raw)
-                        if confidence < self.confidence_threshold:
-                            print(f"   ⚠️ 大模型置信度低，继续由大模型续写。")
-                            force_large_model_this_step = True
-                    
-                    self.stats["tokens_generated_by_large"] += len(new_token_ids)
-                    
-                    history_len = len(current_token_ids) - len(new_token_ids)
-                    self.stats["prefill_tokens_count"] += history_len
-                    
+                    if new_token_ids:
+                        all_generated_segments.append({
+                            "ids": new_token_ids,
+                            "source": 1,
+                            "text": generated_text
+                        })
+                        self.stats["tokens_generated_by_large"] += len(new_token_ids)
+                        
+                        logprobs_raw = output_data.get("logprobs", [])
+                        if logprobs_raw:
+                            conf = self._calculate_confidence(logprobs_raw)
+                            if conf < self.confidence_threshold:
+                                force_large_model_this_step = True 
+                    else:
+                        print("   ❌ 大模型未生成有效内容。")
+                        break
                 else:
                     print("   ❌ 大模型也失败了，终止。")
                     break
 
-            # 步骤计数与停止检查逻辑 (保持原样)
-            if self.step_tag in generated_text:
-                step_count += 1
-            
-            is_natural_end = (self.step_tag not in generated_text) and (len(generated_text.strip()) > 0)
-            has_answer = "Answer:" in generated_text
-            
-            if has_answer or (is_natural_end and not force_large_model_this_step):
-                break
+            # ================= 更新对话历史 =================
+            if generated_text:
+                conversation_history.append({"role": "assistant", "content": generated_text})
+                
+                if self.step_tag in generated_text:
+                    step_count += 1
+                
+                is_natural_end = (self.step_tag not in generated_text) and len(generated_text.strip()) > 0
+                has_answer = "Answer:" in generated_text or "final answer" in generated_text.lower()
+                
+                if has_answer or (is_natural_end and not force_large_model_this_step):
+                    break
+            else:
+                break 
 
-        # ================= 高效混合解码 =================
-        return self._decode_mixed_tokens_fast(current_token_ids, source_flags, len(input_ids))
+        return self._decode_mixed_segments(all_generated_segments)
 
-    def _decode_mixed_tokens_fast(self, all_ids: List[int], all_flags: List[int], prompt_len: int) -> str:
-        if len(all_ids) <= prompt_len:
-            return ""
-            
-        gen_ids = all_ids[prompt_len:]
-        gen_flags = all_flags[prompt_len:]
-        
-        if not gen_ids:
+    def _decode_mixed_segments(self, segments: List[Dict]) -> str:
+        if not segments:
             return ""
             
         final_text_parts = []
-        n = len(gen_ids)
-        i = 0
-        
-        if not hasattr(self, 'tokenizer_large') or self.tokenizer_large is None:
-            if 1 in gen_flags:
-                raise RuntimeError("Detected large model tokens but large tokenizer is not initialized.")
-            return self._decode_tokens(gen_ids)
-
-        while i < n:
-            current_flag = gen_flags[i]
-            start_idx = i
-            while i < n and gen_flags[i] == current_flag:
-                i += 1
-            end_idx = i
-            segment_ids = gen_ids[start_idx:end_idx]
-
-            if current_flag == 0:
-                text = self.tokenizer_small.decode(segment_ids, skip_special_tokens=False)
+        for seg in segments:
+            source = seg["source"]
+            ids = seg["ids"]
+            
+            if source == 0:
+                text = self.tokenizer_small.decode(ids, skip_special_tokens=False)
             else:
-                text = self.tokenizer_large.decode(segment_ids, skip_special_tokens=False)
+                text = self.tokenizer_large.decode(ids, skip_special_tokens=False)
             
             final_text_parts.append(text)
             
@@ -313,7 +315,19 @@ class VLLMRouter(LM):
         for req in tqdm(requests, desc="Speculative Routing (Prefill Mode)"):
             context, gen_kwargs = req
             self.stats["total_requests"] += 1
-            generated_text = self._run_speculative_routing(context)
+            
+            # 获取 stop_sequences
+            stop_sequences = gen_kwargs.get("stop", [self.step_tag])
+            if self.step_tag not in stop_sequences:
+                stop_sequences.append(self.step_tag)
+            
+            messages = []
+            if self.system_prompt:
+                messages.append({"role": "system", "content": self.system_prompt})
+            
+            messages.append({"role": "user", "content": context})
+            
+            generated_text = self._run_speculative_routing(messages, stop_sequences)
             results.append(generated_text)
             
         total = self.stats["total_requests"]
@@ -326,14 +340,14 @@ class VLLMRouter(LM):
             if self.stats['fallback_to_large'] > 0:
                 avg_ctx_len = self.stats['prefill_tokens_count'] / self.stats['fallback_to_large']
                 print(f"   平均每次切换的上下文长度: {avg_ctx_len:.1f} tokens")
-                print(f"   💡 若无 Prefill，这些切换将产生约 {avg_ctx_len * 0.05:.2f}s 的额外延迟/次 (估算)")
 
             small_tokens = self.stats['tokens_generated_by_small']
             large_tokens = self.stats['tokens_generated_by_large']
             total_gen_tokens = small_tokens + large_tokens
             print(f"   小模型生成 Token 数: {small_tokens}")
             print(f"   大模型生成 Token 数: {large_tokens}")
-            print(f"   小模型承担比例: {small_tokens/total_gen_tokens:.2%}" if total_gen_tokens > 0 else "   无生成数据")
+            if total_gen_tokens > 0:
+                print(f"   小模型承担比例: {small_tokens/total_gen_tokens:.2%}")
             print("="*40)
             
         return results

@@ -3,25 +3,38 @@ import subprocess
 import sys
 import time
 import os
+import logging
 import signal
 from pathlib import Path
 
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+
 def start_vllm_server(model_path, port, gpu_id):
     cmd = [
-        sys.executable, "-m", "vllm.entrypoints.api_server",
+        sys.executable, 
+        "-m", "vllm.entrypoints.openai.api_server",
         "--model", model_path,
         "--port", str(port),
+        "--host", "0.0.0.0",       
+        "--dtype", "float16",
         "--tensor-parallel-size", "1",
         "--gpu-memory-utilization", "0.9",
+        "--max-model-len", "32768",  
+        "--max-logprobs", "20",    
         "--disable-log-stats",
-        "--enforce-eager"
+        "--enforce-eager"  
     ]
     
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    
+    env["MLIR_ENABLE_REMARK"] = "1" 
+
     print(f"Starting vllm server: GPU {gpu_id}, Port {port}, Model {model_path}")
     proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+
     return proc
 
 def wait_for_health(port, timeout=180):
@@ -118,31 +131,39 @@ def main():
     
     procs = []
     try:
+        logger.info(f"正在启动小模型服务: {args.small_model} (Port: {args.small_port})")
         p_small = start_vllm_server(args.small_model, args.small_port, args.small_gpu)
         print("Waiting for small model...")
         if not wait_for_health(args.small_port):
-            print("Small model failed to start!!!")
             raise RuntimeError("Small model failed to start")
 
+        logger.info(f"正在启动大模型服务: {args.big_model} (Port: {args.large_port})")
         p_large = start_vllm_server(args.big_model, args.large_port, args.big_gpu)
         print("Waiting for large model...")
         if not wait_for_health(args.large_port):
-            print("Large model failed to start!!!")
             raise RuntimeError("Large model failed to start")
 
         procs = [p_small, p_large]
-        print("✅ 所有model服务已就绪，开始运行 lm-eval...")
+        print("✅ 所有 model 服务已就绪，开始准备评估环境...")
 
-        
-        pre_load_code = (
-            "import route; "  
-            "from lm_eval.__main__ import cli_main; " 
-            "cli_main()"
-        )
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        if current_dir not in sys.path:
+            sys.path.insert(0, current_dir)
 
+        logger.info("正在强制导入 vllm_router 模块...")
+        try:
+            import vllm_router
+            logger.info("vllm_router 导入成功，模型已注册到 lm-eval。")
+        except Exception as e:
+            logger.error(f"导入 vllm_router 失败！请检查缩进或语法错误。\n错误详情: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+
+        model_args_dict = {}
         model_args_str = (
-            f"small_model_url=http://localhost:{args.small_port},"
-            f"large_model_url=http://localhost:{args.large_port},"
+            f"small_url=http://localhost:{args.small_port},"
+            f"large_url=http://localhost:{args.large_port},"
             f"small_model_name={args.small_model},"
             f"large_model_name={args.big_model},"
             f"confidence_threshold={args.confidence_threshold},"
@@ -150,43 +171,71 @@ def main():
             f"max_gen_tokens={args.max_gen_tokens}"
         )
 
-        eval_cmd = [
-            sys.executable,
-            "-c", pre_load_code,
+        model_args_dict["trust_remote_code"] = "True"
+        
+        for item in model_args_str.split(","):
+            if "=" in item:
+                k, v = item.split("=", 1)
+                model_args_dict[k.strip()] = v.strip()
 
-            "--model", "vllm_router",
-            "--model_args", model_args_str,
-            "--tasks", args.tasks,
-            "--output_path", args.output_path,
-            "--batch_size", str(args.batch_size),
-            "--log_samples"
-        ]
+
+        from lm_eval import evaluator
         
-        if args.limit:
-            eval_cmd.extend(["--limit", str(args.limit)])
-        if args.num_fewshot:
-            eval_cmd.extend(["--num_fewshot", str(args.num_fewshot)])
-        if args.apply_chat_template:
-            eval_cmd.append("--apply_chat_template")
+        tasks_list = args.tasks.split(",") if isinstance(args.tasks, str) else args.tasks
+
+        try:
+            logger.info("开始运行 simple_evaluate (这可能需要几分钟)...")
             
-        result = subprocess.run(eval_cmd)
-        
-        if result.returncode != 0:
-            print("lm-eval 执行失败!!!")
+            gen_kwargs_override = {
+            "do_sample": True,           # 必须开启采样，否则 temperature 无效
+            "until": [],                 # 👈 最重要：清空默认停止符，防止 </s> 截断生成
+            "add_bos_token": False       # 防止重复添加 BOS (视具体 tokenizer 而定，通常 False 更安全)
+            }
+
+            results = evaluator.simple_evaluate(
+                model="vllm_router",           # 必须与 @register_model("vllm_router") 一致
+                model_args=model_args_dict,    # 传入字典
+                tasks=tasks_list,
+                #output_path=args.output_path,
+                batch_size=str(args.batch_size), # lm_eval 有时需要字符串
+                log_samples=True,
+                gen_kwargs=gen_kwargs_override,
+                apply_chat_template=args.apply_chat_template,
+                random_seed=0,
+                numpy_random_seed=1234,
+                torch_random_seed=1234,
+                fewshot_random_seed=1234,
+                limit=args.limit,
+                num_fewshot=args.num_fewshot if args.num_fewshot else None
+            )
+
+            print("\n" + "="*50)
+            print("✅ 评估完成！结果摘要:")
+            print("="*50)
+            from lm_eval.utils import make_table
+            try:
+                print(make_table(results))
+            except:
+                print(results.get("results", {}))
+                
+        except Exception as e:
+            logger.error(f"❌ 评估过程中发生严重错误: {e}")
+            import traceback
+            traceback.print_exc()
             sys.exit(1)
             
-        print("评估完成")
-        
+        print("评估流程结束，正在关闭服务...")
+
     except Exception as e:
-        print(f"error: {e}")
+        print(f"❌ 主程序发生异常: {e}")
         import traceback
         traceback.print_exc()
     finally:
         print("! 正在关闭 vLLM 服务...")
         for p in procs:
             if p:
-                p.terminate()
                 try:
+                    p.terminate()
                     p.wait(timeout=5)
                 except:
                     p.kill()
