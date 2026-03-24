@@ -3,19 +3,29 @@ import requests
 import math
 import time
 import json
+import logging
 from typing import List, Optional, Dict, Any, Tuple
 from lm_eval.api.model import LM
 from lm_eval.api.instance import Instance
 from lm_eval.api.registry import register_model
 from tqdm import tqdm
 from transformers import AutoTokenizer 
+import re
+from collections import Counter
 
+# ================= 优化后的 System Prompt =================
 SYSTEM_PROMPT = (
-    "You are a reasoning assistant. You must solve the problem step by step. "
-    "CRITICAL REQUIREMENT: After completing EACH logical step, you MUST output the tag '</step>' on a new line. "
-    "Do not output the final answer until you have gone through all necessary steps. "
-    "Example format:\n<think>\nStep 1 analysis...\n</step>\nStep 2 calculation...\n</step>\n...<think>\nFinal Answer."
+    "You are an expert mathematician solving a problem step-by-step.\n"
+    "CRITICAL RULES:\n"
+    "1. NEVER restart the solution. NEVER say 'Let's solve', 'Okay', 'Alright', or restate the problem statement in subsequent steps.\n"
+    "2. If you see a '</step>' tag or a system instruction to continue, you MUST pick up exactly where the previous thought left off.\n"
+    "3. Your output should be a continuous flow of logic. Step 1 starts the logic, Step 2 continues it, etc.\n"
+    "4. Only output the final answer in \\boxed{} format when the solution is fully derived.\n"
+    "5. If interrupted, assume the user wants you to continue the calculation, not start over."
 )
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 @register_model("vllm_router")
 class VLLMRouter(LM):
@@ -26,7 +36,7 @@ class VLLMRouter(LM):
         small_model_name: str,
         large_model_name: str,
         confidence_threshold: float = 0.6,
-        max_step_tokens: int = 2048,
+        max_step_tokens: int = 1024,
         max_gen_tokens: int = 16384,
         step_tag: str = "</step>",
         **kwargs
@@ -37,6 +47,7 @@ class VLLMRouter(LM):
         self.small_model_name = small_model_name
         self.large_model_name = large_model_name
 
+        self.max_steps = 20
         try:
             self.confidence_threshold = float(confidence_threshold)
         except (ValueError, TypeError):
@@ -47,7 +58,15 @@ class VLLMRouter(LM):
         self.step_tag = step_tag
         self.system_prompt = SYSTEM_PROMPT
 
-        # 加载 Tokenizer
+        # 定义常见的 EOS 标记列表，用于清洗
+        self.eos_tokens = [
+            "<｜end▁of▁sentence｜>", # Qwen / DeepSeek 常见
+            "</s>",                 # Llama / Mistral 常见
+            "<|endoftext|>",        # GPT-2 / Others
+            "[END]",                # 某些自定义模型
+            "<eos>"                 # 通用
+        ]
+
         print(f"Loading Small Model Tokenizer: {small_model_name}...")
         self.tokenizer_small = AutoTokenizer.from_pretrained(small_model_name, trust_remote_code=True)
         if self.tokenizer_small.pad_token is None:
@@ -69,6 +88,17 @@ class VLLMRouter(LM):
             "prefill_tokens_count": 0
         }
 
+    def _clean_eos(self, text: str) -> str:
+        """
+        强力清洗文本末尾的所有 EOS 标记。
+        """
+        cleaned_text = text
+        for eos in self.eos_tokens:
+            # 使用 while 确保移除所有连续出现的 EOS (虽然通常只有一个)
+            while cleaned_text.rstrip().endswith(eos):
+                cleaned_text = cleaned_text.rstrip()[:-len(eos)]
+        return cleaned_text
+
     @property
     def tokenizer_name(self) -> str:
         return self.large_model_name
@@ -82,7 +112,8 @@ class VLLMRouter(LM):
         stop_sequences: List[str] = None,
         get_logprobs: bool = True,
         temperature: float = 0.7,
-        top_k_logprobs: int = 5 
+        top_k_logprobs: int = 5,
+        repetition_penalty: float = 1.15 # 新增：默认开启重复惩罚
     ) -> Optional[Dict]:
         
         endpoint = f"{url.rstrip('/')}/v1/completions"
@@ -92,6 +123,7 @@ class VLLMRouter(LM):
             "prompt": prompt_text,
             "max_tokens": max_tokens,
             "temperature": temperature,
+            "repetition_penalty": repetition_penalty, # 应用重复惩罚
             "stream": False,
             "n": 1
         }
@@ -112,21 +144,19 @@ class VLLMRouter(LM):
                 elif "outputs" in data:
                     return data
                 return {"choices": [{"text": "", "logprobs": None}], "raw": data}
-                
             else:
-                # 仅在非 200 时打印错误，减少噪音
                 if response.status_code == 400:
                     err_text = response.text[:150]
                     if "logprobs" in err_text and "max_logprobs" in err_text:
-                        print(f"⚠️ API Error 400: logprobs limit exceeded. Try reducing top_k_logprobs.")
+                        logger.warning(f"⚠️ API Error 400: logprobs limit exceeded.")
                     else:
-                        print(f"⚠️ API Error 400: {err_text}")
+                        logger.warning(f"⚠️ API Error 400: {err_text}")
                 else:
-                    print(f"⚠️ API Error {response.status_code}: {response.text[:100]}")
+                    logger.warning(f"⚠️ API Error {response.status_code}: {response.text[:100]}")
                 return None
 
         except Exception as e:
-            print(f"⚠️ Network Error: {type(e).__name__} - {e}")
+            logger.error(f"⚠️ Network Error: {type(e).__name__} - {e}")
             return None
 
     def _calculate_confidence(self, logprobs_data) -> float:
@@ -134,42 +164,69 @@ class VLLMRouter(LM):
             return 0.0
         
         probs = []
-        # 适配 vLLM 返回的字典格式 {'token_logprobs': [...]}
         if isinstance(logprobs_data, dict):
             token_logprobs_list = logprobs_data.get("token_logprobs", [])
             if token_logprobs_list and all(isinstance(x, (int, float)) for x in token_logprobs_list):
-                probs = [math.exp(float(x)) for x in token_logprobs_list if x is not None]
+                valid_logs = [x for x in token_logprobs_list if x is not None]
+                if valid_logs:
+                    probs = [math.exp(float(x)) for x in valid_logs]
         
         return sum(probs) / len(probs) if probs else 0.0
 
+    def _check_repetition(self, text: str, threshold: float = 0.5) -> bool:
+        """检测文本是否陷入死循环复读"""
+        sentences = re.split(r'[。\n]', text)
+        sentences = [s.strip() for s in sentences if len(s.strip()) > 15]
+        if not sentences:
+            return False
+        counter = Counter(sentences)
+        most_common_count = counter.most_common(1)[0][1]
+        if most_common_count / len(sentences) > threshold:
+            logger.warning(f"🔴 检测到复读！最高频句子重复 {most_common_count} 次")
+            return True
+        return False
+
     def _run_speculative_routing(self, messages: List[Dict[str, str]], stop_sequences: List[str]) -> str:
-        """
-        核心路由逻辑。
-        messages: 纯文本内容的对话列表 [{'role': 'user', 'content': '...'}, ...]
-        在此函数内部统一应用模板，避免外部重复处理。
-        """
+        logger.info(f"🚀 [Routing] 开始执行 (动态截断+人工补全模式), 最大步数: {self.max_steps}, 阈值: {self.confidence_threshold}")
+        
         conversation_history = list(messages)
         all_generated_segments = [] 
         
-        max_steps = 20
         step_count = 0
         force_large_model_this_step = False 
+        current_step = 0
+        
+        last_generated_prefix = "" 
+        repeat_counter = 0
 
-        while step_count < max_steps:
+        while step_count < self.max_steps:
             current_step = step_count + 1
             use_large_model = force_large_model_this_step
             force_large_model_this_step = False
             
-            # 【关键】在此处统一应用模板，将 messages 转换为 prompt 字符串
-            # 无论是小模型还是大模型，都使用大模型的 tokenizer 来构建 prompt (通常小模型兼容大模型格式，或者两者格式一致)
-            # 如果小模型格式完全不同，需要在这里加判断，但通常 Speculative Decoding 要求格式一致
-            current_prompt_text = self._apply_template_safe(conversation_history)
+            # 构建 Prompt
+            current_prompt_text = self._apply_template_safe(conversation_history, current_step == 1)
+    
+            if current_step <= 3:
+                logger.info(f"🔍 [DEBUG] Step {current_step} 发送给模型的完整 Prompt (最后 1000 字符):")
+                logger.info("-" * 50)
+                debug_tail = current_prompt_text[-1000:] if len(current_prompt_text) > 1000 else current_prompt_text
+                # 检查末尾是否有 EOS
+                if any(debug_tail.endswith(eos) for eos in self.eos_tokens):
+                    logger.warning("⚠️ [DEBUG] 警告：Prompt 末尾检测到 EOS 标记！这会导致思维中断。")
+                logger.info(debug_tail.replace("\n", "\\n"))
+                logger.info("-" * 50)
+                logger.info(f"🔍 [DEBUG] conversation_history 长度: {len(conversation_history)} 条消息")
+                if len(conversation_history) > 2:
+                    logger.info(f"🔍 [DEBUG] 倒数第二条消息 (Assistant): {conversation_history[-2]['content'][:100]}...")
             
             generated_text = ""
             new_token_ids = []
+            finish_reason = ""
 
-            # ================= 分支 A: 小模型执行 =================
             if not use_large_model:
+                logger.debug(f"🔹 Step {current_step}: 调用小模型 (MaxTokens={self.max_step_tokens})...")
+                
                 small_res = self._call_vllm_api(
                     url=self.small_url,
                     model_name=self.small_model_name,
@@ -177,14 +234,15 @@ class VLLMRouter(LM):
                     max_tokens=self.max_step_tokens,
                     stop_sequences=stop_sequences,
                     get_logprobs=True,
-                    temperature=0.7
+                    temperature=0.7,
+                    repetition_penalty=1.15
                 )
                 
                 if small_res and small_res.get("choices"):
                     choice = small_res["choices"][0]
                     generated_text = choice.get("text", "")
+                    finish_reason = choice.get("finish_reason", "")
                     
-                    # 获取 token_ids (优先API返回，否则本地encode)
                     new_token_ids = choice.get("token_ids")
                     if not new_token_ids and generated_text:
                         new_token_ids = self.tokenizer_small.encode(generated_text, add_special_tokens=False)
@@ -192,28 +250,34 @@ class VLLMRouter(LM):
                     logprobs_raw = choice.get("logprobs", [])
                     confidence = self._calculate_confidence(logprobs_raw)
                     
+                    preview_text = generated_text[:60].replace("\n", "\\n") if generated_text else ""
+                    logger.info(f"🔹 Step {current_step} [小]: 置信度={confidence:.3f} | 结束原因: {finish_reason or 'EOS'} | 预览: '{preview_text}...'")
+
                     if new_token_ids:
                         all_generated_segments.append({
-                            "ids": new_token_ids,
-                            "source": 0, # 0: small
-                            "text": generated_text
+                            "ids": new_token_ids, "source": 0, "text": generated_text
                         })
                         self.stats["tokens_generated_by_small"] += len(new_token_ids)
                         
-                        # 仅当置信度低时标记切换
                         if confidence < self.confidence_threshold:
+                            logger.warning(f"⚠️ Step {current_step}: 置信度低 ({confidence:.3f})，下一步切换大模型。")
                             force_large_model_this_step = True
                     else:
+                        logger.warning(f"⚠️ Step {current_step}: 小模型无 token_ids，切换大模型。")
                         force_large_model_this_step = True
                 else:
+                    logger.error(f"❌ Step {current_step}: 小模型调用失败，切换大模型。")
                     force_large_model_this_step = True
 
-            # ================= 分支 B: 大模型执行 =================
             else:
                 self.stats["fallback_to_large"] += 1
-                # 统计 Prefill 长度 (用于分析加速效果)
-                ctx_ids = self.tokenizer_large.apply_chat_template(conversation_history, tokenize=True, add_generation_prompt=False)
-                self.stats["prefill_tokens_count"] += len(ctx_ids)
+                logger.warning(f"🔸 Step {current_step}: 🔴 切换到大模型...")
+                
+                try:
+                    ctx_ids = self.tokenizer_large.apply_chat_template(conversation_history, tokenize=True, add_generation_prompt=False)
+                    self.stats["prefill_tokens_count"] += len(ctx_ids)
+                except:
+                    pass
                 
                 large_res = self._call_vllm_api(
                     url=self.large_url,
@@ -222,119 +286,163 @@ class VLLMRouter(LM):
                     max_tokens=self.max_step_tokens,
                     stop_sequences=stop_sequences,
                     get_logprobs=False,
-                    temperature=0.7
+                    temperature=0.7,
+                    repetition_penalty=1.15
                 )
                 
                 if large_res and large_res.get("choices"):
                     choice = large_res["choices"][0]
                     generated_text = choice.get("text", "")
+                    finish_reason = choice.get("finish_reason", "")
                     
                     new_token_ids = choice.get("token_ids")
                     if not new_token_ids and generated_text:
                         new_token_ids = self.tokenizer_large.encode(generated_text, add_special_tokens=False)
-                    
-                    if new_token_ids:
-                        all_generated_segments.append({
-                            "ids": new_token_ids,
-                            "source": 1, # 1: large
-                            "text": generated_text
-                        })
-                        self.stats["tokens_generated_by_large"] += len(new_token_ids)
-                    else:
-                        break # 大模型也没生成，退出
-                else:
-                    break # 大模型调用失败，退出
 
-            # ================= 更新对话历史 & 检查结束条件 =================
+                    if new_token_ids:
+                        preview_text = generated_text[:60].replace("\n", "\\n") if generated_text else ""
+                        logprobs_raw = choice.get("logprobs", [])
+                        confidence = self._calculate_confidence(logprobs_raw)
+
+                        logger.info(f"🔸 Step {current_step} [大]: 置信度={confidence:.3f}, 结束原因: {finish_reason or 'EOS'} | 预览: '{preview_text}...'")
+                        
+                        all_generated_segments.append({
+                            "ids": new_token_ids, "source": 1, "text": generated_text
+                        })
+
+                        self.stats["tokens_generated_by_large"] += len(new_token_ids)
+                        if confidence < self.confidence_threshold:
+                            logger.warning(f"⚠️ Step {current_step}: 置信度低 ({confidence:.3f})，下一步继续大模型。")
+                            force_large_model_this_step = True
+                    else:
+                        logger.warning(f"⚠️ Step {current_step}: 大模型无 token_ids，终止。")
+                        break 
+                else:
+                    logger.error(f"❌ Step {current_step}: 大模型调用失败，终止。")
+                    break 
+
+            # ================= 【核心修复】更新历史 & 检查结束条件 =================
             if generated_text:
-                conversation_history.append({"role": "assistant", "content": generated_text})
+                # 1. 检查复读
+                current_prefix = generated_text[:30]
+                if current_prefix == last_generated_prefix and len(generated_text) > 50:
+                    repeat_counter += 1
+                    if repeat_counter >= 2:
+                        logger.error("❌ 检测到重复生成循环，强制终止。")
+                        break
+                else:
+                    repeat_counter = 0
+                    last_generated_prefix = current_prefix
+
+                # 2. 【关键】清洗生成文本中的 EOS 标记，防止污染历史
+                clean_generated_text = self._clean_eos(generated_text)
                 
-                # 检查 step 标签
-                if self.step_tag in generated_text:
-                    step_count += 1
+                # 3. 检查是否需要人工注入 step_tag
+                history_content = clean_generated_text
+                step_tag_found = self.step_tag in clean_generated_text
                 
-                # 检查自然结束 (没有 step 标签且有内容，或者包含答案关键词)
-                is_natural_end = (self.step_tag not in generated_text) and len(generated_text.strip()) > 0
-                has_answer = "Answer:" in generated_text or "final answer" in generated_text.lower()
+                if finish_reason == "length":
+                    if not step_tag_found:
+                        history_content += f"\n{self.step_tag}\n"
+                        logger.debug(f"✂️ Step {current_step}: 被长度截断，人工注入 {self.step_tag} 强制闭合步骤。")
+                elif not step_tag_found:
+                    if "\\boxed{" not in clean_generated_text:
+                        history_content += f"\n{self.step_tag}\n"
+                        logger.debug(f"🏷️ Step {current_step}: 自然结束但无标签，人工补全 {self.step_tag}。")
+                    else:
+                        logger.debug(f"✅ Step {current_step}: 检测到答案，无需补标签。")
+
+                # 4. 将【清洗并处理后的文本】加入历史
+                conversation_history.append({"role": "assistant", "content": history_content})
                 
-                if has_answer or (is_natural_end and not force_large_model_this_step):
+                step_count += 1
+                logger.debug(f"🔄 Step {current_step} 完成，累计步数: {step_count}")
+                
+                has_answer = "\\boxed{" in clean_generated_text
+                if has_answer:
+                    logger.info(f"🎯 Step {current_step}: 检测到最终答案，任务完成。")
                     break
+                
+                if force_large_model_this_step:
+                    logger.debug(f"⏭️ 准备在下一轮 (Step {step_count+1}) 切换大模型...")
+                else:
+                    logger.debug(f"⏩ 继续下一轮 (Step {step_count+1}) 小模型推理...")
+                    
             else:
+                logger.warning("⚠️ 生成的文本为空，终止循环。")
                 break 
+        
+        total_tokens = self.stats["tokens_generated_by_small"] + self.stats["tokens_generated_by_large"]
+        logger.info(f"✅ [Routing] 完成。总步数: {step_count}, 总Token: {total_tokens}")
 
         return self._decode_mixed_segments(all_generated_segments)
 
-    def _apply_template_safe(self, messages: List[Dict[str, str]]) -> str:
-        """安全地应用模板，防止多重模板"""
-        # 始终使用大模型的 tokenizer 来渲染 prompt，保证格式一致性
-        # 假设输入 messages 是纯文本内容，不包含特殊 token
+    def _apply_template_safe(self, messages: List[Dict[str, str]], is_first_step: bool = False) -> str:
+        """
+        应用模板，并确保彻底清除末尾的 EOS 标记。
+        """
         try:
+            # 1. 渲染历史消息 (不加 generation prompt)
             prompt = self.tokenizer_large.apply_chat_template(
                 messages, 
                 tokenize=False, 
-                add_generation_prompt=True
+                add_generation_prompt=False
             )
+            
+            # 2. 【强力清洗】移除末尾所有可能的 EOS 标记
+            # 无论 tokenizer 是否自动添加了 EOS，这里都强制移除
+            prompt = self._clean_eos(prompt)
+            
+            # 3. 动态添加后缀
+            if is_first_step:
+                # === 第一步：冷启动 ===
+                prompt += "<｜Assistant｜> <think>\n"
+                logger.debug("🔹 [Template] Step 1: 添加冷启动标签")
+            else:
+                # === 第二步及以后：热续写 ===
+                # 只加一个换行，确保模型认为自己在续写同一句话
+                # 绝对不要加 <｜Assistant｜> 或 <think>
+                prompt += "\n"
+                logger.debug("🔗 [Template] Step N: 热续写模式 (无新标签)")
+            
             return prompt
+            
         except Exception as e:
-            # 降级处理：手动拼接 (仅作为最后手段)
+            logger.error(f"Template error: {e}")
+            # Fallback
             text = ""
             for msg in messages:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                text += f"{role}: {content}\n"
-            text += "assistant: "
-            return text
+                content = self._clean_eos(msg['content']) # Fallback 中也清洗
+                text += f"{msg['role']}: {content}\n"
+            
+            if is_first_step:
+                return text + "assistant: <think>\n"
+            else:
+                return text + "\n"
 
     def apply_chat_template(self, messages: List[Dict[str, str]], **kwargs) -> str:
-        """
-        lm_eval 框架调用的标准接口，用于将消息列表转换为带模板的 Prompt。
-        这对于构建 Few-Shot 示例至关重要。
-        """
-        # 使用大模型的 tokenizer 进行模板化，保证格式统一
-        # 注意：fewshot 构建时通常不需要 add_generation_prompt=True，除非特定任务要求
-        # 这里默认 False 以兼容 fewshot 上下文拼接，生成时由 _run_speculative_routing 控制
         add_generation_prompt = kwargs.get('add_generation_prompt', False)
-        
         try:
             return self.tokenizer_large.apply_chat_template(
                 messages, 
                 tokenize=False, 
                 add_generation_prompt=add_generation_prompt
             )
-        except Exception as e:
-            # 降级处理：如果 tokenizer 报错，手动拼接
-            print(f"⚠️ apply_chat_template 失败: {e}，使用手动拼接")
-            text = ""
-            for msg in messages:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                # 简单的通用格式，具体可根据模型调整
-                if role == "system":
-                    text += f"System: {content}\n"
-                elif role == "user":
-                    text += f"User: {content}\n"
-                elif role == "assistant":
-                    text += f"Assistant: {content}\n"
-            if add_generation_prompt:
-                text += "Assistant: "
-            return text
+        except Exception:
+            return "\n".join([f"{m['role']}: {m['content']}" for m in messages])
 
     def _decode_mixed_segments(self, segments: List[Dict]) -> str:
         if not segments:
             return ""
-            
         final_text_parts = []
         for seg in segments:
             source = seg["source"]
             ids = seg["ids"]
-            # 注意：这里解码时 skip_special_tokens=False 以保留可能的格式，
-            # 但如果只需要纯文本回答，可以设为 True。根据 step_tag 需求，建议 False 或手动处理
             if source == 0:
                 text = self.tokenizer_small.decode(ids, skip_special_tokens=False)
             else:
                 text = self.tokenizer_large.decode(ids, skip_special_tokens=False)
             final_text_parts.append(text)
-            
         return "".join(final_text_parts)
 
     def generate_until(self, requests: List) -> List[str]:
@@ -342,71 +450,60 @@ class VLLMRouter(LM):
         pbar = tqdm(requests, desc="Speculative Routing")
 
         for req in pbar:
-            # 1. 解析请求
             if isinstance(req, Instance):
                 context, gen_kwargs = req.args
             else:
-                try:
-                    context, gen_kwargs = req
-                except ValueError:
-                    raise TypeError(f"Invalid request format: {type(req)}")
+                context, gen_kwargs = req
 
             self.stats["total_requests"] += 1
             
-            # 2. 处理停止符
             stop_sequences = gen_kwargs.get("until", []) 
             if isinstance(stop_sequences, str):
                 stop_sequences = [stop_sequences]
             
-            if not stop_sequences:
-                stop_sequences = [self.step_tag]
-            elif self.step_tag not in stop_sequences:
+            if self.step_tag not in stop_sequences:
                 stop_sequences.append(self.step_tag)
-
-            # 3. 【修复点】不再进行去模板化操作
-            # lm_eval 传入的 context 通常已经是纯文本问题。
-            # 我们直接将其放入 user message 中，由 _run_speculative_routing 内部统一加模板。
+            
             clean_context = context
             
-            # 构建 Messages 结构
             final_messages = []
             if self.system_prompt:
                 final_messages.append({"role": "system", "content": self.system_prompt})
             
-            final_messages.append({"role": "user", "content": clean_context})
+            format_instruction = (
+                f"\n\nIMPORTANT: Solve this step-by-step. "
+                f"After EACH logical step, output '{self.step_tag}' on a new line. "
+                f"Do not output the final answer until the end. "
+                f"Start thinking now:"
+            )
+            final_messages.append({"role": "user", "content": clean_context + format_instruction})
 
-            # 4. 调用路由
             try:
                 generated_text = self._run_speculative_routing(final_messages, stop_sequences)
                 results.append(generated_text)
             except Exception as e:
-                print(f"\n❌ Error processing request: {e}")
+                logger.error(f"Error processing request: {e}")
                 results.append("")
 
         pbar.close()
         
-        # 5. 打印最终统计
         total = self.stats["total_requests"]
         if total > 0:
             print("\n" + "="*40)
             print("Routing Statistics:")
             print(f"   Total Requests: {total}")
-            print(f"   Fallbacks to Large: {self.stats['fallback_to_large']}")
-            
-            small_tokens = self.stats['tokens_generated_by_small']
-            large_tokens = self.stats['tokens_generated_by_large']
-            total_gen = small_tokens + large_tokens
-            
-            print(f"   Small Model Tokens: {small_tokens}")
-            print(f"   Large Model Tokens: {large_tokens}")
-            if total_gen > 0:
-                print(f"   Small Model Ratio: {small_tokens/total_gen:.2%}")
+            print(f"   Fallbacks: {self.stats['fallback_to_large']}")
+            s_tok = self.stats['tokens_generated_by_small']
+            l_tok = self.stats['tokens_generated_by_large']
+            print(f"   Tokens (Small/Large): {s_tok} / {l_tok}")
+            if s_tok + l_tok > 0:
+                print(f"   Small Ratio: {s_tok/(s_tok+l_tok):.2%}")
             print("="*40)
             
         return results
 
-    def loglikelihood(self, requests: List[Tuple[str, str]]) -> List[Tuple[float, bool]]:
+    def loglikelihood(self, requests):
         raise NotImplementedError("Speculative Routing supports 'generate_until' only.")
 
-    def loglikelihood_rolling(self, requests: List[Tuple[str, str]]) -> List[float]:
+    def loglikelihood_rolling(self, requests):
         raise NotImplementedError("Not implemented.")
