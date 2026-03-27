@@ -22,6 +22,8 @@ SYSTEM_PROMPT = (
     "3. Your output should be a continuous flow of logic. Step 1 starts the logic, Step 2 continues it, etc.\n"
     "4. Only output the final answer in \\boxed{} format when the solution is fully derived.\n"
     "5. If interrupted, assume the user wants you to continue the calculation, not start over."
+    "6. Only output '</step>' once the step is fully finished."
+    "Example format:\n<think>\\nStep 1 analysis...</step>\\nStep 2 calculation...</step>\\n...\\nTherefore, the answer is \\boxed{204}. </step>"
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -47,7 +49,6 @@ class VLLMRouter(LM):
         self.small_model_name = small_model_name
         self.large_model_name = large_model_name
 
-        self.max_steps = max_gen_tokens // max_step_tokens + 1
         try:
             self.confidence_threshold = float(confidence_threshold)
         except (ValueError, TypeError):
@@ -55,6 +56,8 @@ class VLLMRouter(LM):
 
         self.max_step_tokens = max_step_tokens
         self.max_gen_tokens = max_gen_tokens
+
+        self.max_steps = int(max_gen_tokens) // int(max_step_tokens) + 1
         self.step_tag = step_tag
         self.system_prompt = SYSTEM_PROMPT
 
@@ -108,6 +111,7 @@ class VLLMRouter(LM):
         url: str, 
         model_name: str,
         prompt_text: str,
+        prompt_token_ids: Optional[List[int]] = None,
         max_tokens: int = 256, 
         stop_sequences: List[str] = None,
         get_logprobs: bool = True,
@@ -123,6 +127,7 @@ class VLLMRouter(LM):
             "prompt": prompt_text,
             "max_tokens": max_tokens,
             "temperature": temperature,
+            "top_p": 0.9,
             "repetition_penalty": repetition_penalty, # 应用重复惩罚
             "stream": False,
             "n": 1
@@ -135,7 +140,7 @@ class VLLMRouter(LM):
             payload["stop"] = stop_sequences
 
         try:
-            response = self.session.post(endpoint, json=payload, timeout=120)
+            response = self.session.post(endpoint, json=payload, timeout=300)
             
             if response.status_code == 200:
                 data = response.json()
@@ -276,6 +281,7 @@ class VLLMRouter(LM):
                 small_res = self._call_vllm_api(
                     url=url_used,
                     model_name=model_name,
+                    prompt_text = current_raw_text,
                     prompt_token_ids=input_ids,
                     max_tokens=self.max_step_tokens,
                     stop_sequences=stop_sequences,
@@ -314,6 +320,7 @@ class VLLMRouter(LM):
                 large_res = self._call_vllm_api(
                     url=url_used,
                     model_name=model_name,
+                    prompt_text = current_raw_text,
                     prompt_token_ids=input_ids,
                     max_tokens=self.max_step_tokens,
                     stop_sequences=stop_sequences,
