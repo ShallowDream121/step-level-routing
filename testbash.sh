@@ -7,6 +7,7 @@ fi
 
 export VLLM_WORKER_MULTIPROC_METHOD='spawn'
 
+MODE = "mix"
 
 BIG_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Llama-8B"
 SMALL_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Qwen-1.5B"
@@ -29,15 +30,17 @@ BATCH_SIZE="auto"
 
 
 echo "=============================================================================="
-echo "🚀 启动 Speculative Routing 评测"
+echo "   启动 Speculative Routing 评测"
 echo "   大模型: $BIG_MODEL (GPU: $BIG_GPU)"
 echo "   小模型: $SMALL_MODEL (GPU: $SMALL_GPU)"
+echo "   模式：$MODE"
 echo "   任务集: $TASKS"
 echo "=============================================================================="
 
 CMD=(
     python run.py
     --big_model "$BIG_MODEL"
+    --mode "$MODE"
     --small_model "$SMALL_MODEL"
     --big_gpu "$BIG_GPU"
     --small_gpu "$SMALL_GPU"
@@ -65,10 +68,10 @@ EXIT_CODE=$?
 
 if [ $EXIT_CODE -eq 0 ]; then
     echo ""
-    echo "🎉 评测完成！结果已保存至: $OUTPUT_PATH"
+    echo "评测完成！结果已保存至: $OUTPUT_PATH"
 else
     echo ""
-    echo "❌ 评测失败 (Exit Code: $EXIT_CODE)"
+    echo "评测失败 (Exit Code: $EXIT_CODE)"
 fi
 
 exit $EXIT_CODE

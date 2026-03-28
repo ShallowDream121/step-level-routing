@@ -7,19 +7,18 @@ doc_to_text: "Problem: {{problem}}\nAnswer:"
 doc_to_target: "{{answer}}"
 
 filter_list:
-  - name: "strict-match-last"
+  - name: "number-parsing"
     filter:
       - function: "regex"
-        regex_pattern: ".*\\\\boxed\\{([^}]+)\\}.*$"
+        regex_pattern: ".*\\\\boxed\\{(-?[0-9\\.]+)\\}.*$"
         group_select: 0
       - function: "take_first"
   
 metric_list:
-  - metric: exact_match
+  - metric: number
     aggregation: mean
     higher_is_better: true
-    ignore_case: true
-    ignore_punctuation: true
+
 generation_kwargs:
   until: []
   do_sample: false
