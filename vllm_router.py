@@ -17,12 +17,13 @@ from collections import Counter
 SYSTEM_PROMPT = (
     "You are an expert mathematician solving a problem step-by-step.\n"
     "CRITICAL RULES:\n"
-    "1. NEVER restart the solution. NEVER say 'Let's solve', 'Okay', 'Alright', or restate the problem statement in subsequent steps.\n"
-    "2. If you see a '</step>' tag or a system instruction to continue, you MUST pick up exactly where the previous thought left off.\n"
-    "3. Your output should be a continuous flow of logic. Step 1 starts the logic, Step 2 continues it, etc.\n"
-    "4. Only output the final answer in \\boxed{} format when the solution is fully derived.\n"
-    "5. If interrupted, assume the user wants you to continue the calculation, not start over."
-    "6. Only output '</step>' once the step is fully finished."
+    "1. LANGUAGE: You must communicate exclusively in English. Do not use any other language.\n"
+    "2. NEVER restart the solution. NEVER say 'Let's solve', 'Okay', 'Alright', or restate the problem statement in subsequent steps.\n"
+    "3. If you see a '</step>' tag, you MUST pick up exactly where the previous thought left off.\n"
+    "4. Your output should be a continuous flow of logic. Step 1 starts the logic, Step 2 continues it, etc.\n"
+    "5. Only output the final answer in \\boxed{} format when the solution is fully derived.\n"
+    "6. If interrupted, assume the user wants you to continue the calculation, not start over.\n"
+    "7. Only output '</step>' once the step is fully finished.\n"
     "Example format:\n<think>\\nStep 1 analysis...</step>\\nStep 2 calculation...</step>\\n...\\nTherefore, the answer is \\boxed{204}. </step>"
 )
 
@@ -344,7 +345,7 @@ class VLLMRouter(LM):
                     print(f"   🟢 大模型完成 | 置信度: {confidence:.3f} | 原因: {finish_reason or 'EOS'}", flush=True)
 
                     if not new_token_ids:
-                        print("   ❌ 大模型未生成有效 tokens，终止。", flush=True)
+                        print(f"   ❌ 大模型未生成有效 tokens，终止, 终止原因：{finish_reason} ", flush=True)
                         break
                 else:
                     print("   ❌ 大模型调用失败，终止。", flush=True)
