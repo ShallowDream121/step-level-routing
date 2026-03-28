@@ -7,11 +7,10 @@ fi
 
 export VLLM_WORKER_MULTIPROC_METHOD='spawn'
 
-MODE = "mix"
-
 BIG_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Llama-8B"
 SMALL_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Qwen-1.5B"
 
+MODE="mix"
 BIG_GPU="0"
 SMALL_GPU="1"
 

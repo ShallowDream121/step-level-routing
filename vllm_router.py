@@ -15,7 +15,9 @@ from collections import Counter
 
 SYSTEM_PROMPT = (
     "You are a reasoning assistant. You must solve the problem step by step. "
-    "CRITICAL REQUIREMENT: After completing EACH logical step, you MUST output the tag '</step>'"
+    "CRITICAL REQUIREMENT: "
+    "1.You must user English."
+    "2.After completing EACH logical step, you MUST output the tag '</step>'"
     "Do not output the final answer until you have gone through all necessary steps. "
     "Put your final answer within \\boxed{}."
     "Example format:\n<think>\\nStep 1 analysis... </step>\\nStep 2 calculation... </step>\\n...\\nTherefore, the answer is \\boxed{204}. </think>"
@@ -187,7 +189,7 @@ class VLLMRouter(LM):
             prompt = tokenizer.apply_chat_template(
                 messages, 
                 tokenize=False, 
-                add_generation_prompt=True
+                add_generation_prompt=False
             )
             return prompt.rstrip()
         except Exception as e:
@@ -201,13 +203,13 @@ class VLLMRouter(LM):
             return text
         
     def _run_speculative_routing(self, messages: List[Dict[str, str]], stop_sequences: List[str]) -> str:        
-        logger.info(f"[Routing] 启动 | 最大步数: {self.max_steps} | 阈值: {self.confidence_threshold}", flush=True)
+        logger.info(f"[Routing] 启动 | 最大步数: {self.max_steps} | 阈值: {self.confidence_threshold}")
         
         try:
             initial_model_type = "small"
             current_raw_text = self._get_initial_prompt_text(messages, initial_model_type)
         except Exception as e:
-            logger.warning(f"模板渲染失败: {e}", flush=True)
+            logger.warning(f"模板渲染失败: {e}")
             current_raw_text = "\n".join([f"{m['role']}: {m['content']}" for m in messages]) + "\nassistant: "
         
         all_generated_segments = [] 
@@ -215,7 +217,7 @@ class VLLMRouter(LM):
         force_large_model_this_step = False
         
         print(f"初始 Prompt 长度: {len(current_raw_text)} chars", flush=True)
-        self.print_preview(current_raw_text, 100)
+        self.print_preview(current_raw_text, 200)
 
         while step_count < self.max_steps:
             current_step = step_count + 1
@@ -229,7 +231,7 @@ class VLLMRouter(LM):
             input_ids = tokenizer_used.encode(current_raw_text, add_special_tokens=False)
             
             if len(input_ids) > 32000:
-                logger.warning(f"上下文过长 ({len(input_ids)})，截断尾部...", flush=True)
+                logger.warning(f"上下文过长 ({len(input_ids)})，截断尾部...")
                 input_ids = input_ids[-30000:] 
             if use_large_model:
                 self.stats["prefill_tokens_count"] += len(input_ids)

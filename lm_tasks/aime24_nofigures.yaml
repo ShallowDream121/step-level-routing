@@ -10,7 +10,7 @@ filter_list:
   - name: "number-parsing"
     filter:
       - function: "regex"
-        regex_pattern: ".*\\\\boxed\\{(-?[0-9\\.]+)\\}.*$"
+        regex_pattern: ".*\\\\boxed\\{(-?[0-9\\.]+)\\}.*"
         group_select: 0
       - function: "take_first"
   

@@ -258,64 +258,64 @@ def main():
             
             gen_kwargs_override = {
                 "do_sample": True,
-                "until": [],                 
+                "until": ["</think>"],                 
                 "add_bos_token": False
             }
 
-            if args.mode == "mix":
-                results = evaluator.simple_evaluate(
-                    model="vllm_router",       
-                    model_args=model_args_dict,  
-                    tasks=final_task_list,       
-                    task_manager=task_manager,   
-                    batch_size=str(args.batch_size),
-                    log_samples=True,
-                    gen_kwargs=gen_kwargs_override,
-                    apply_chat_template=args.apply_chat_template,
-                    random_seed=0,
-                    numpy_random_seed=1234,
-                    torch_random_seed=1234,
-                    fewshot_random_seed=1234,
-                    limit=args.limit,
-                    num_fewshot=args.num_fewshot if args.num_fewshot else None
-                )
-            else:
-                model = args.big_model if args.mode == "large_only" else args.small_model
-                port = args.large_port if args.mode == "large_only" else args.small_port
-                model_args_dict = {}
-                model_args_str = (
-                    f"base_url=http://localhost:{port}/v1,"
-                    f"model={model},"
-                    f"tokenizer={model}," 
-                )
-                for item in model_args_str.split(","):
-                    if "=" in item:
-                        k, v = item.split("=", 1)
-                        model_args_dict[k.strip()] = v.strip()
-                
-                gen_kwargs_override = {
-                    "max_gen_toks": args.max_gen_tokens,
-                    "temperature": 0.7,
-                    "top_p": 0.9,
-                    "do_sample" : True,
-                    "until": []
-                }
-                results = evaluator.simple_evaluate(
-                    model="vllm",       
-                    model_args=model_args_dict,  
-                    tasks=final_task_list,       
-                    task_manager=task_manager,   
-                    batch_size=str(args.batch_size),
-                    log_samples=True,
-                    gen_kwargs=gen_kwargs_override,
-                    apply_chat_template=args.apply_chat_template,
-                    random_seed=0,
-                    numpy_random_seed=1234,
-                    torch_random_seed=1234,
-                    fewshot_random_seed=1234,
-                    limit=args.limit,
-                    num_fewshot=args.num_fewshot if args.num_fewshot else None
-                )
+            #if args.mode == "mix":
+            results = evaluator.simple_evaluate(
+                model="vllm_router",       
+                model_args=model_args_dict,  
+                tasks=final_task_list,       
+                task_manager=task_manager,   
+                batch_size=str(args.batch_size),
+                log_samples=True,
+                gen_kwargs=gen_kwargs_override,
+                apply_chat_template=args.apply_chat_template,
+                random_seed=0,
+                numpy_random_seed=1234,
+                torch_random_seed=1234,
+                fewshot_random_seed=1234,
+                limit=args.limit,
+                num_fewshot=args.num_fewshot if args.num_fewshot else None
+            )
+            #else:
+            #    model = args.big_model if args.mode == "large_only" else args.small_model
+            #    port = args.large_port if args.mode == "large_only" else args.small_port
+            #    model_args_dict = {}
+            #    model_args_str = (
+            #        f"base_url=http://localhost:{port}/v1,"
+            #        f"model={model},"
+            #        f"tokenizer={model}," 
+            #    )
+            #    for item in model_args_str.split(","):
+            #        if "=" in item:
+            #            k, v = item.split("=", 1)
+            #            model_args_dict[k.strip()] = v.strip()
+            #    
+            #    gen_kwargs_override = {
+            #        "max_gen_toks": args.max_gen_tokens,
+            #        "temperature": 0.7,
+            #        "top_p": 0.9,
+            #        "do_sample" : True,
+            #        "until": []
+            #    }
+            #    results = evaluator.simple_evaluate(
+            #        model="vllm",       
+            #        model_args=model_args_dict,  
+            #        tasks=final_task_list,       
+            #        task_manager=task_manager,   
+            #        batch_size=str(args.batch_size),
+            #        log_samples=True,
+            #        gen_kwargs=gen_kwargs_override,
+            #        apply_chat_template=args.apply_chat_template,
+            #        random_seed=0,
+            #        numpy_random_seed=1234,
+            #        torch_random_seed=1234,
+            #        fewshot_random_seed=1234,
+            #        limit=args.limit,
+            #        num_fewshot=args.num_fewshot if args.num_fewshot else None
+            #    )
 
             if args.output_path:
                 output_dir = os.path.dirname(args.output_path)
