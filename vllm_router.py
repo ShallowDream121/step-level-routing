@@ -207,7 +207,7 @@ class VLLMRouter(LM):
             initial_model_type = "small"
             current_raw_text = self._get_initial_prompt_text(messages, initial_model_type)
         except Exception as e:
-            logger.warning(f"❌ 模板渲染失败: {e}", flush=True)
+            logger.warning(f"模板渲染失败: {e}", flush=True)
             current_raw_text = "\n".join([f"{m['role']}: {m['content']}" for m in messages]) + "\nassistant: "
         
         all_generated_segments = [] 
@@ -215,6 +215,7 @@ class VLLMRouter(LM):
         force_large_model_this_step = False
         
         print(f"初始 Prompt 长度: {len(current_raw_text)} chars", flush=True)
+        self.print_preview(current_raw_text, 100)
 
         while step_count < self.max_steps:
             current_step = step_count + 1
@@ -444,3 +445,16 @@ class VLLMRouter(LM):
 
     def loglikelihood_rolling(self, requests):
         raise NotImplementedError("Not implemented.")
+    
+    # for debug
+    def print_preview(self, text, length=100):
+        if not text:
+            print("[空文本]")
+            return
+
+        if len(text) <= length * 2:
+            print(f"全文内容:\n{text}")
+        else:
+            head = text[:length]
+            tail = text[-length:]
+            print(f"文本预览 (前{length}字 & 后{length}字):\n{head}\n\n...... (中间省略 {len(text) - length * 2} 字) ...... \n\n{tail}")
