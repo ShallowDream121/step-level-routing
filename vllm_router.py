@@ -15,16 +15,11 @@ from collections import Counter
 
 # ================= 优化后的 System Prompt =================
 SYSTEM_PROMPT = (
-    "You are an expert mathematician solving a problem step-by-step.\n"
-    "CRITICAL RULES:\n"
-    "1. LANGUAGE: You must communicate exclusively in English. Do not use any other language.\n"
-    "2. NEVER restart the solution. NEVER say 'Let's solve', 'Okay', 'Alright', or restate the problem statement in subsequent steps.\n"
-    "3. If you see a '</step>' tag, you MUST pick up exactly where the previous thought left off.\n"
-    "4. Your output should be a continuous flow of logic. Step 1 starts the logic, Step 2 continues it, etc.\n"
-    "5. Only output the final answer in \\boxed{} format when the solution is fully derived.\n"
-    "6. If interrupted, assume the user wants you to continue the calculation, not start over.\n"
-    "7. Only output '</step>' once the step is fully finished.\n"
-    "Example format:\n<think>\\nStep 1 analysis...</step>\\nStep 2 calculation...</step>\\n...\\nTherefore, the answer is \\boxed{204}. </step>"
+    "You are a reasoning assistant. You must solve the problem step by step. "
+    "CRITICAL REQUIREMENT: After completing EACH logical step, you MUST output the tag '</step>'"
+    "Do not output the final answer until you have gone through all necessary steps. "
+    "Put your final answer within \\boxed{}."
+    "Example format:\n<think>\\nStep 1 analysis... </step>\\nStep 2 calculation... </step>\\n...\\nTherefore, the answer is \\boxed{204}."
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
