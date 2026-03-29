@@ -337,11 +337,13 @@ class VLLMRouter(LM):
                 step_count += 1
                 print(f"  已拼接文本 (当前总长: {len(current_raw_text)} chars)", flush=True)
 
-                if "\\boxed{" in clean_segment:
-                    print("   检测到最终答案 (\\boxed)，任务完成。", flush=True)
-                    break
+                if "</step>" in clean_segment:
+                    print("   检测到步骤结束 (</step>)", flush=True)
                 elif "</think>" in clean_segment:
                     print("   检测到推理结束 (</think>)，任务完成。", flush=True)
+                    break
+                elif "\\boxed{" in clean_segment:
+                    print("   检测到最终答案 (\\boxed)，任务完成。", flush=True)
                     break
                 
                 if finish_reason == "length":

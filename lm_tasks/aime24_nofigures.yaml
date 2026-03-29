@@ -7,15 +7,15 @@ doc_to_text: "Problem: {{problem}}\nAnswer:"
 doc_to_target: "{{answer}}"
 
 filter_list:
-  - name: "number-parsing"
+  - name: "result-match"
     filter:
       - function: "regex"
-        regex_pattern: ".*\\\\boxed\\{(-?[0-9\\.]+)\\}.*"
+        regex_pattern: "\\\\boxed\\{(?:0*(\\d+)(?:\\.0*)?|(-?\\d+\\.\\d+?))\\}"
         group_select: 0
       - function: "take_first"
   
 metric_list:
-  - metric: number
+  - metric: exact_match
     aggregation: mean
     higher_is_better: true
 
