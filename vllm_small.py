@@ -39,7 +39,7 @@ class VLLMSMAILL(LM):
         self.small_model_name = small_model_name
         self.debug = debug
 
-        self.max_gen_tokens = max_gen_tokens
+        self.max_gen_tokens = int(max_gen_tokens)
 
         self.step_tag = step_tag
         self.system_prompt = SYSTEM_PROMPT
@@ -107,6 +107,17 @@ class VLLMSMAILL(LM):
         except Exception as e:
             logger.error(f"Network Error: {type(e).__name__} - {e}")
             return None
+    
+    def apply_chat_template(self, messages: List[Dict[str, str]], **kwargs) -> str:
+        add_generation_prompt = kwargs.get('add_generation_prompt', False)
+        try:
+            return self.tokenizer_small.apply_chat_template(
+                messages, 
+                tokenize=False, 
+                add_generation_prompt=add_generation_prompt
+            )
+        except Exception:
+            return "\n".join([f"{m['role']}: {m['content']}" for m in messages])
 
 
     def _get_initial_prompt_text(self, messages: List[Dict[str, str]]) -> str:
@@ -141,11 +152,9 @@ class VLLMSMAILL(LM):
             url=self.small_url,
             model_name=self.small_model_name,
             prompt_text = prompt_text,
-            max_tokens=self.max_step_tokens,
+            max_tokens=self.max_gen_tokens,
             stop_sequences=stop_sequences,
-            get_logprobs=True,
             temperature=0.7,
-            repetition_penalty=1.15
         )
         
         if small_res and "choices" in small_res:
@@ -217,4 +226,17 @@ class VLLMSMAILL(LM):
 
     def loglikelihood_rolling(self, requests):
         raise NotImplementedError("Not implemented.")
+
+    # for debug
+    def print_preview(self, text, length=100):
+        if not text:
+            print("[空文本]")
+            return
+
+        if len(text) <= length * 2:
+            print(f"全文内容:\n{text}")
+        else:
+            head = text[:length]
+            tail = text[-length:]
+            print(f"文本预览 (前{length}字 & 后{length}字):\n{head}\n\n...... (中间省略 {len(text) - length * 2} 字) ...... \n\n{tail}")
 

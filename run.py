@@ -10,6 +10,7 @@ import yaml
 import glob
 import requests
 import vllm_router
+import vllm_small
 import traceback
 from lm_eval import evaluator, tasks
 from lm_eval.tasks import TaskManager 
@@ -140,7 +141,7 @@ def parse_arguments():
 
     # ---- 其他参数 ---
     parser.add_argument(
-        "--debug", action="store_true", 
+        "--debug", action="store_true", default=False,
         help="Enable debug mode."
     )
 
@@ -189,8 +190,8 @@ def main():
             f"large_model_name={args.big_model},"
             f"confidence_threshold={args.confidence_threshold},"
             f"max_step_tokens={args.max_step_tokens},"
-            f"max_gen_tokens={args.max_gen_tokens}"
-            f"debug={str(args.debug)},"
+            f"max_gen_tokens={args.max_gen_tokens},"
+            f"debug={str(args.debug)}"
         )
         
         for item in model_args_str.split(","):

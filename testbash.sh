@@ -10,7 +10,7 @@ export VLLM_WORKER_MULTIPROC_METHOD='spawn'
 BIG_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Llama-8B"
 SMALL_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Qwen-1.5B"
 
-MODE="mix"
+MODE="small_only"
 BIG_GPU="0"
 SMALL_GPU="1"
 
@@ -18,7 +18,7 @@ SMALL_PORT=8001
 LARGE_PORT=8002
 
 TASKS="./lm_tasks"
-OUTPUT_PATH="./log_traces/1.5B-8B-r3"
+OUTPUT_PATH="./log_traces/1.5B-only-aime24"
 
 CONFIDENCE_THRESHOLD=0.7
 MAX_STEP_TOKENS=2048
@@ -61,6 +61,7 @@ fi
 
 if [ ! -z "$DEBUG" ]; then
     CMD+=($DEBUG)
+fi
 
 CMD+=(--apply_chat_template)
 
