@@ -137,7 +137,13 @@ def parse_arguments():
         "--apply_chat_template", action="store_true", 
         help="Apply chat template to inputs (recommended for chat models)."
     )
-    
+
+    # ---- 其他参数 ---
+    parser.add_argument(
+        "--debug", action="store_true", 
+        help="Enable debug mode."
+    )
+
     return parser.parse_args()
 
 def main():
@@ -184,6 +190,7 @@ def main():
             f"confidence_threshold={args.confidence_threshold},"
             f"max_step_tokens={args.max_step_tokens},"
             f"max_gen_tokens={args.max_gen_tokens}"
+            f"debug={str(args.debug)},"
         )
         
         for item in model_args_str.split(","):
@@ -262,69 +269,57 @@ def main():
                 "add_bos_token": False
             }
 
-            #if args.mode == "mix":
-            results = evaluator.simple_evaluate(
-                model="vllm_router",       
-                model_args=model_args_dict,  
-                tasks=final_task_list,       
-                task_manager=task_manager,   
-                batch_size=str(args.batch_size),
-                log_samples=True,
-                gen_kwargs=gen_kwargs_override,
-                apply_chat_template=args.apply_chat_template,
-                random_seed=0,
-                numpy_random_seed=1234,
-                torch_random_seed=1234,
-                fewshot_random_seed=1234,
-                limit=args.limit,
-                num_fewshot=args.num_fewshot if args.num_fewshot else None
-            )
-            #else:
-            #    model = args.big_model if args.mode == "large_only" else args.small_model
-            #    port = args.large_port if args.mode == "large_only" else args.small_port
-            #    model_args_dict = {}
-            #    model_args_str = (
-            #        f"base_url=http://localhost:{port}/v1,"
-            #        f"model={model},"
-            #        f"tokenizer={model}," 
-            #    )
-            #    for item in model_args_str.split(","):
-            #        if "=" in item:
-            #            k, v = item.split("=", 1)
-            #            model_args_dict[k.strip()] = v.strip()
-            #    
-            #    gen_kwargs_override = {
-            #        "max_gen_toks": args.max_gen_tokens,
-            #        "temperature": 0.7,
-            #        "top_p": 0.9,
-            #        "do_sample" : True,
-            #        "until": []
-            #    }
-            #    results = evaluator.simple_evaluate(
-            #        model="vllm",       
-            #        model_args=model_args_dict,  
-            #        tasks=final_task_list,       
-            #        task_manager=task_manager,   
-            #        batch_size=str(args.batch_size),
-            #        log_samples=True,
-            #        gen_kwargs=gen_kwargs_override,
-            #        apply_chat_template=args.apply_chat_template,
-            #        random_seed=0,
-            #        numpy_random_seed=1234,
-            #        torch_random_seed=1234,
-            #        fewshot_random_seed=1234,
-            #        limit=args.limit,
-            #        num_fewshot=args.num_fewshot if args.num_fewshot else None
-            #    )
+            results = None
+            if args.mode == "mix":
+                logger.info("使用混合路由进行评估...")
+                results = evaluator.simple_evaluate(
+                    model="vllm_router",       
+                    model_args=model_args_dict,  
+                    tasks=final_task_list,       
+                    task_manager=task_manager,   
+                    batch_size=str(args.batch_size),
+                    log_samples=True,
+                    gen_kwargs=gen_kwargs_override,
+                    apply_chat_template=args.apply_chat_template,
+                    random_seed=0,
+                    numpy_random_seed=1234,
+                    torch_random_seed=1234,
+                    fewshot_random_seed=1234,
+                    limit=args.limit,
+                    num_fewshot=args.num_fewshot if args.num_fewshot else None
+                )
+            else:
+                logger.info("仅使用小模型进行评估...")
+                results = evaluator.simple_evaluate(
+                    model="vllm_small",       
+                    model_args=model_args_dict,  
+                    tasks=final_task_list,       
+                    task_manager=task_manager,   
+                    batch_size=str(args.batch_size),
+                    log_samples=True,
+                    gen_kwargs=gen_kwargs_override,
+                    apply_chat_template=args.apply_chat_template,
+                    random_seed=0,
+                    numpy_random_seed=1234,
+                    torch_random_seed=1234,
+                    fewshot_random_seed=1234,
+                    limit=args.limit,
+                    num_fewshot=args.num_fewshot if args.num_fewshot else None
+                )
+            
+            if not results:
+                raise ValueError("评估返回了无效的结果")
 
             if args.output_path:
-                output_dir = os.path.dirname(args.output_path)
-                if output_dir:
-                    os.makedirs(output_dir, exist_ok=True)
+                from datetime import datetime
+                os.makedirs(args.output_path, exist_ok=True)
+
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_file = os.path.join(args.output_path, f"results_{timestamp}.json")
                 
-                with open(args.output_path, 'w', encoding='utf-8') as f:
+                with open(output_file, 'w', encoding='utf-8') as f:
                     json.dump(results, f, indent=2, ensure_ascii=False)
-                logger.info(f"评估结果已保存至: {args.output_path}")
+                logger.info(f"评估结果已保存至: {output_file}")
             else:
                 logger.info("未指定 output_path，结果仅打印在控制台。")
 

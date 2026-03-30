@@ -16,7 +16,7 @@ from collections import Counter
 SYSTEM_PROMPT = (
     "You are a reasoning assistant. You must solve the problem step by step. "
     "CRITICAL REQUIREMENT: "
-    "1.You must user English."
+    "1.You must use English."
     "2.After completing EACH logical step, you MUST output the tag '</step>'"
     "Do not output the final answer until you have gone through all necessary steps. "
     "Put your final answer within \\boxed{}."
@@ -34,10 +34,11 @@ class VLLMRouter(LM):
         large_url: str,
         small_model_name: str,
         large_model_name: str,
-        confidence_threshold: float = 0.85,
+        confidence_threshold: float = 0.7,
         max_step_tokens: int = 2048,
         max_gen_tokens: int = 16384,
         step_tag: str = "</step>",
+        debug: bool = False,
         **kwargs
     ):
         super().__init__()
@@ -45,11 +46,12 @@ class VLLMRouter(LM):
         self.large_url = large_url
         self.small_model_name = small_model_name
         self.large_model_name = large_model_name
+        self.debug = debug
 
         try:
             self.confidence_threshold = float(confidence_threshold)
         except (ValueError, TypeError):
-            self.confidence_threshold = 0.85
+            self.confidence_threshold = 0.7
 
         self.max_step_tokens = max_step_tokens
         self.max_gen_tokens = max_gen_tokens
@@ -216,8 +218,9 @@ class VLLMRouter(LM):
         step_count = 0
         force_large_model_this_step = False
         
-        print(f"初始 Prompt 长度: {len(current_raw_text)} chars", flush=True)
-        self.print_preview(current_raw_text, 200)
+        if self.debug:
+            print(f"初始 Prompt 长度: {len(current_raw_text)} chars", flush=True)
+            self.print_preview(current_raw_text, 200)
 
         while step_count < self.max_steps:
             current_step = step_count + 1
@@ -235,9 +238,9 @@ class VLLMRouter(LM):
                 input_ids = input_ids[-30000:] 
             if use_large_model:
                 self.stats["prefill_tokens_count"] += len(input_ids)
-                print(f"Step {current_step} [大]: 输入 Tokens={len(input_ids)}", flush=True)
+                logger.info(f"Step {current_step} [大]: 输入 Tokens={len(input_ids)}")
             else:
-                print(f"Step {current_step} [小]: 输入 Tokens={len(input_ids)}", flush=True)
+                logger.info(f"Step {current_step} [小]: 输入 Tokens={len(input_ids)}")
 
             generated_text = ""
             new_token_ids = []
@@ -269,14 +272,14 @@ class VLLMRouter(LM):
                     logprobs_raw = choice.get("logprobs", None)
                     confidence = self._calculate_confidence(logprobs_raw)
                     
-                    print(f" 小模型完成 | 置信度: {confidence:.3f} | 原因: {finish_reason or 'EOS'}", flush=True)
+                    logger.info(f" 小模型完成 | 置信度: {confidence:.3f} | 原因: {finish_reason or 'EOS'}")
 
                     if not new_token_ids:
-                        print("   小模型未生成有效 tokens。", flush=True)
+                        logger.error("   小模型未生成有效 tokens。")
                         break
 
                 else:
-                    print("  小模型调用失败或返回格式错误", flush=True)
+                    logger.error("  小模型调用失败或返回格式错误")
                     break
 
             # ================= 分支 B: 大模型执行 =================
@@ -307,13 +310,13 @@ class VLLMRouter(LM):
                     logprobs_raw = choice.get("logprobs", None)
                     confidence = self._calculate_confidence(logprobs_raw)
 
-                    print(f"  大模型完成 | 置信度: {confidence:.3f} | 原因: {finish_reason or 'EOS'}", flush=True)
+                    logger.info(f"  大模型完成 | 置信度: {confidence:.3f} | 原因: {finish_reason or 'EOS'}")
 
                     if not new_token_ids:
-                        print(f"   大模型未生成有效 tokens，终止, 终止原因：{finish_reason} ", flush=True)
+                        logger.error(f"   大模型未生成有效 tokens，终止, 终止原因：{finish_reason} ")
                         break
                 else:
-                    print("   大模型调用失败，终止。", flush=True)
+                    logger.error("   大模型调用失败，终止。")
                     break
 
             # ================= 更新上下文 =================
@@ -335,37 +338,36 @@ class VLLMRouter(LM):
                 current_raw_text += clean_segment
                 
                 step_count += 1
-                print(f"  已拼接文本 (当前总长: {len(current_raw_text)} chars)", flush=True)
+                if self.debug:
+                    print(f"  已拼接文本 (当前总长: {len(current_raw_text)} chars)", flush=True)
 
-                if "</step>" in clean_segment:
-                    print("   检测到步骤结束 (</step>)", flush=True)
-                elif "</think>" in clean_segment:
-                    print("   检测到推理结束 (</think>)，任务完成。", flush=True)
+                if "</think>" in clean_segment:
+                    logger.info("   检测到推理结束 (</think>)，任务完成。")
                     break
                 elif "\\boxed{" in clean_segment:
-                    print("   检测到最终答案 (\\boxed)，任务完成。", flush=True)
+                    logger.info("   检测到最终答案 (\\boxed)，任务完成。")
                     break
                 
                 if finish_reason == "length":
-                    print("   达到单步最大长度，自动继续下一步。", flush=True)
+                    logger.info("   达到单步最大长度，自动继续下一步。")
                 
                 if not use_large_model and confidence < self.confidence_threshold:
-                    print(f"   置信度 ({confidence:.3f}) 低于阈值，*下一步* 切换大模型。", flush=True)
+                    logger.info(f"   置信度 ({confidence:.3f}) 低于阈值，*下一步* 切换大模型。")
                     force_large_model_this_step = True
                 elif use_large_model and confidence < self.confidence_threshold:
-                    print(f"   大模型置信度 ({confidence:.3f}) 仍低，*下一步* 继续大模型。", flush=True)
+                    logger.info(f"   大模型置信度 ({confidence:.3f}) 仍低，*下一步* 继续大模型。")
                     force_large_model_this_step = True
                 else:
                     if use_large_model:
-                        print("   下一步恢复小模型推理。", flush=True)
+                        logger.info("   下一步恢复小模型推理。")
                     else:
-                        print("   下一步继续小模型推理。", flush=True)
+                        logger.info("   下一步继续小模型推理。")
 
             else:
-                print("   无生成内容，循环终止。", flush=True)
+                logger.error("   无生成内容，循环终止。")
                 break
 
-        print(f"[Routing] 结束。总步数: {step_count}", flush=True)
+        logger.info(f"[Routing] 结束。总步数: {step_count}")
         return self._decode_mixed_segments(all_generated_segments)
 
     def apply_chat_template(self, messages: List[Dict[str, str]], **kwargs) -> str:

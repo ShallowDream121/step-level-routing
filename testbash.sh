@@ -26,6 +26,7 @@ MAX_GEN_TOKENS=16384
 LIMIT=""  
 NUM_FEWSHOT=0
 BATCH_SIZE="auto"
+DEBUG=""
 
 
 echo "=============================================================================="
@@ -57,6 +58,9 @@ CMD=(
 if [ ! -z "$LIMIT" ]; then
     CMD+=($LIMIT)
 fi
+
+if [ ! -z "$DEBUG" ]; then
+    CMD+=($DEBUG)
 
 CMD+=(--apply_chat_template)
 
