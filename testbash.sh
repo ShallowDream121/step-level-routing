@@ -17,7 +17,7 @@ SMALL_GPU="1"
 SMALL_PORT=8001
 LARGE_PORT=8002
 
-TASKS="./lm_tasks"
+TASKS="./lm_tasks/aime24"
 OUTPUT_PATH="./log_traces/1.5B-only-aime24"
 
 CONFIDENCE_THRESHOLD=0.7
@@ -26,7 +26,6 @@ MAX_GEN_TOKENS=16384
 LIMIT=""  
 NUM_FEWSHOT=0
 BATCH_SIZE="auto"
-DEBUG=""
 
 
 echo "=============================================================================="
@@ -59,10 +58,8 @@ if [ ! -z "$LIMIT" ]; then
     CMD+=($LIMIT)
 fi
 
-if [ ! -z "$DEBUG" ]; then
-    CMD+=($DEBUG)
-fi
 
+#CMD+=(--debug)
 CMD+=(--apply_chat_template)
 
 

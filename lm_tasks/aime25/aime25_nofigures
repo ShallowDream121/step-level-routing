@@ -1,10 +1,10 @@
-task: aime24_nofigures
-dataset_path: simplescaling/aime24_nofigures
+task: aime25_nofigures
+dataset_path: simplescaling/aime25_nofigures
 test_split: train
 output_type: generate_until
 
 doc_to_text: "Problem: {{problem}}\nAnswer:"
-doc_to_target: "{{answer}}"
+doc_to_target: "{{answer | int}}"
 
 filter_list:
   - name: "result-match"
@@ -27,4 +27,4 @@ generation_kwargs:
 
 num_fewshot: 0 
 
-description: "Evaluation on the AIME 2024 dataset (no figures version) from simplescaling."
+description: "Evaluation on the AIME 2025 dataset (no figures version) from simplescaling."
