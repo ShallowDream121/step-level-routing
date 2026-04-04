@@ -7,15 +7,6 @@ from lm_eval.api.registry import register_model
 from tqdm import tqdm
 from transformers import AutoTokenizer 
 
-SYSTEM_PROMPT = (
-    "You are a reasoning assistant. You must solve the problem step by step. "
-    "CRITICAL REQUIREMENT: "
-    "1.You must use English."
-    "2.Do not output the final answer until you have gone through all necessary steps. "
-    "Put your final answer within \\boxed{}."
-    "Example format:\n<think>\\n...\\nTherefore, the answer is \\boxed{204}. </think>"
-)
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -42,7 +33,6 @@ class VLLMSMAILL(LM):
         self.max_gen_tokens = int(max_gen_tokens)
 
         self.step_tag = step_tag
-        self.system_prompt = SYSTEM_PROMPT
 
         logger.info(f"Loading Small Model Tokenizer: {small_model_name}...")
         self.tokenizer_small = AutoTokenizer.from_pretrained(small_model_name, trust_remote_code=True)
@@ -196,9 +186,6 @@ class VLLMSMAILL(LM):
                 stop_sequences = [stop_sequences]
             
             final_messages = []
-            if self.system_prompt:
-                final_messages.append({"role": "system", "content": self.system_prompt})
-            
             final_messages.append({"role": "user", "content": context})
 
             try:
