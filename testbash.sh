@@ -5,6 +5,7 @@ if [ -f .env ]; then
     export $(grep -v '^#' .env | xargs)
 fi
 
+export SMALL_ONLY=1
 export VLLM_WORKER_MULTIPROC_METHOD='spawn'
 
 BIG_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Llama-8B"
@@ -17,7 +18,7 @@ SMALL_GPU="1"
 SMALL_PORT=8001
 LARGE_PORT=8002
 
-TASKS="./lm_tasks/aime24"
+TASKS="aime24_nofigures"
 OUTPUT_PATH="./log_traces/1.5B-only-aime24"
 
 CONFIDENCE_THRESHOLD=0.7

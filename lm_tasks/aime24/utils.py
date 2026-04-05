@@ -7,20 +7,26 @@ if os.getenv("SMALL_ONLY", "0") == "1":
     QUERY_TEMPLATE = 'You are a reasoning assistant. You must solve the problem step by step. CRITICAL REQUIREMENT:  '\
     '1.You must use English.' \
     '2.Do not output the final answer until you have gone through all necessary steps.'\
-    'Put your final answer within \\boxed{}. '\
-    'Example format:\n<think>\\n...\\nTherefore, the answer is \\boxed{204}. </think> '\
+    'Put your final answer within \\boxed{{}}. '\
+    'Example format:\n<think>\\n...\\nTherefore, the answer is \\boxed{{204}}. </think> '\
     '{question}' \
-    'Answer:<｜Assistant｜><think>\n'
+    'Answer:'
 else:
     QUERY_TEMPLATE = '{question}'
 
 print("QUERY_TEMPLATE: ", QUERY_TEMPLATE)
 
 def doc_to_text(doc: dict) -> str:
-    return QUERY_TEMPLATE.format(Question=doc.get("problem", doc.get("question")))
+    return QUERY_TEMPLATE.format(question=doc.get("problem"))
 
 def _normalize_answer(ans: str) -> str:
     ans = ans.strip().rstrip('.')
+    frac_match = re.match(r"^\\frac\{([^}]+)\}\{([^}]+)\}$", ans)
+    if frac_match:
+        numerator = int(frac_match.group(1))
+        denominator = int(frac_match.group(2))
+        if denominator != 0:
+            ans = str(numerator / denominator)
 
     try:
         val = Decimal(ans)
@@ -32,14 +38,14 @@ def _normalize_answer(ans: str) -> str:
     except (ValueError, InvalidOperation):
         return ans.lower().replace(" ", "")
 
-def process_results(doc: Dict, results: List[str]) -> Dict[str, int]:
+def process_results(doc: Dict, results: List[str]):
     ground_truth = _normalize_answer(str(doc.get("answer", "")))
     
     raw_pred = results[0] if isinstance(results, list) else results
     
     extracted_answer = None
     
-    boxed_match = re.search(r"\\\\boxed\{(.+)\}", raw_pred)
+    boxed_match = re.search(r"\\boxed\{([^}]+)\}", raw_pred)
     if boxed_match:
         extracted_answer = boxed_match.group(1).strip()
 
@@ -67,5 +73,5 @@ def process_results(doc: Dict, results: List[str]) -> Dict[str, int]:
     
     return {
         "exact_match": is_correct,
-        "extracted_answer": extracted_answer 
+        "extracted_answer!": extracted_answer
     }
