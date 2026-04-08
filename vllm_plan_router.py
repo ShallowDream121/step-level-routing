@@ -16,8 +16,8 @@ from collections import Counter
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-@register_model("vllm_history_router")
-class VLLMHistoryRouter(LM):
+@register_model("vllm_plan_router")
+class VLLMPlanRouter(LM):
     def __init__(self,
                  small_url: str,
                  large_url: str,
@@ -42,27 +42,28 @@ class VLLMHistoryRouter(LM):
             self.confidence_threshold = 0.7
             
         self.max_step_tokens = max_step_tokens
-        self.max_gen_tokens = max_gen_tokens
+        self.max_gen_tokens = int(max_gen_tokens)
         self.step_tag = step_tag
 
-        self.plan_system_prompt = ("""
-            You are an expert Task Planner. Your goal is to analyze a user's problem and break it down into a logical sequence of steps.
+        self.plan_system_prompt = ("""You are an expert Task Planner. Your ONLY goal is to analyze a user's problem and break it down into a logical sequence of steps for a smaller model to execute.
 
-            **Constraints:**
-            1. Do NOT solve the problem yet. Only output the plan.
-            2. You MUST wrap the entire plan strictly between the tags `START` and `END`.
-            3. Inside the tags, use a numbered list (1., 2., 3., ...) for each step.
-            4. Each step should be a concise, actionable instruction (e.g., "Calculate the derivative of x^2").
+        **CRITICAL CONSTRAINTS:**
+        1.  **DO NOT SOLVE THE PROBLEM:** You must strictly output ONLY the plan. Do NOT perform any calculations, do NOT derive variables (e.g., do not find 'x' or 's'), and do NOT provide the final answer.
+        2.  **NO CHAIN OF THOUGHT LEAKAGE:** Do not output conversational filler like "Let's solve this," "First I will," or "Wait, actually."
+        3.  **STRICT OUTPUT FORMAT:** Your response must contain ONLY the text between the `START` and `END` tags. Nothing before, nothing after.
+        4.  **ATOMIC STEPS:** Break down complex tasks into small, specific steps. Avoid vague phrases like "Perform calculations." Instead, specify "Calculate X using formula Y."
 
-            **Output Example:**
-            START
-            1. Identify the key variables in the problem.
-            2. Apply the Pythagorean theorem to find the hypotenuse.
-            3. Calculate the final area using the derived length.
-            END
-            </think>
-            """
-        )
+        **Output Example:**
+        START
+        1. Extract the distance (d) and speed (v) from the problem description.
+        2. Calculate the time taken using the formula t = d / v.
+        3. Convert the time from hours to minutes by multiplying by 60.
+        4. Add the waiting time 't' to the calculated travel time.
+        END
+
+        **Output Instructions:**
+        Analyze the user's problem and generate the plan strictly following the format above.
+        """)
         self.system_prompt = (
             "You are a reasoning assistant. You must solve the problem step by step. "
             "I will provide you with a PLAN and ask you to execute one step at a time with **English**. "
@@ -95,6 +96,10 @@ class VLLMHistoryRouter(LM):
             "tokens_generated_by_small": 0,
             "tokens_generated_by_large": 0,
         }
+    
+    @property
+    def tokenizer_name(self) -> str:
+        return self.large_model_name
 
     def _call_vllm_api(
         self, 
@@ -211,13 +216,13 @@ class VLLMHistoryRouter(LM):
 
         prompt_text = self.tokenizer_large.apply_chat_template(plan_messages, tokenize=False, add_generation_prompt=True)
         if self.debug:
-            self.print_preview(self, prompt_text, 200)
+            self.print_preview(prompt_text, 200)
 
         plan_res = self._call_vllm_api(
             url=self.large_url,
             model_name=self.large_model_name,
             prompt_text=prompt_text,
-            max_tokens=512,
+            max_tokens=self.max_step_tokens,
             stop_sequences=[],
             get_logprobs=False
         )
@@ -226,20 +231,27 @@ class VLLMHistoryRouter(LM):
         planned_steps = []
         if plan_res and "choices" in plan_res:
             plan_text = plan_res["choices"][0]["text"]
-            planned_steps = self._parse_plan(plan_text)
+            planned_steps = self.parse_plan(plan_text)
             logger.info(f"Plan parsed: {len(planned_steps)} steps")
         else:
             logger.warning("Plan parsing failed, using default method.")
             planned_steps = ["Solve the problem step by step."]
 
+        #print(f"全文：{plan_text}")
+        plan_text_for = ""
+        for step_idx, step_desc in enumerate(planned_steps):
+            plan_text_for +=f"{step_idx+1}.{step_desc}"
+            print(f"task {step_idx+1}: {step_desc}")
+
         conversation_history = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": messages[0]['content']},
-            {"role": "assistant", "content": plan_text}
+            {"role": "assistant", "content": plan_text_for}
         ]
 
         all_generated_segments = []
         force_large_model_this_step = False
+        gen_tokens = 0
 
         for step_idx, step_desc in enumerate(planned_steps):
             current_step = step_idx + 1
@@ -247,19 +259,19 @@ class VLLMHistoryRouter(LM):
             
             current_messages = conversation_history.copy()
             step_instruction = (
-                f"\n[EXECUTE STEP {current_step}/{len(planned_steps)}]\n"
-                f"Task: {step_desc}"
+                f"Please complete task: {step_desc}"
             )
             current_messages.append({"role": "user", "content": step_instruction})
 
 
-            current_prompt_text = self.tokenizer_large.apply_chat_template(
+            tokenizer = self.tokenizer_large if use_large_model else self.tokenizer_small
+            current_prompt_text = tokenizer.apply_chat_template(
                 current_messages, 
                 tokenize=False, 
                 add_generation_prompt=True 
             )
             if self.debug:
-                self.print_preview(self, current_prompt_text, 200)
+                self.print_preview(current_prompt_text, 200)
 
             tokenizer_used = self.tokenizer_large if use_large_model else self.tokenizer_small
             url_used = self.large_url if use_large_model else self.small_url
@@ -267,7 +279,7 @@ class VLLMHistoryRouter(LM):
 
             input_len = len(tokenizer_used.encode(current_prompt_text, add_special_tokens=False))
             if input_len > 30000:
-                logger.warning(f"Context too long ({input_len} tokens). Truncating history...")w
+                logger.warning(f"Context too long ({input_len} tokens). Truncating history...")
                 pass 
             
             step_res = self._call_vllm_api(
@@ -299,17 +311,22 @@ class VLLMHistoryRouter(LM):
                     self.stats["tokens_generated_by_large"] += len(new_token_ids)
                 else:
                     self.stats["tokens_generated_by_small"] += len(new_token_ids)
+                gen_tokens += len(new_token_ids)
 
                 if not use_large_model and confidence < self.confidence_threshold:
                     logger.info(f"Step {current_step} Confidence Low ({confidence:.3f}), switch to Large next")
                     force_large_model_this_step = True
                 else:
+                    logger.info(f"Step {current_step} Confidence OK ({confidence:.3f})")
                     force_large_model_this_step = False
 
                 conversation_history.append({"role": "assistant", "content": generated_text})
 
                 if "\\boxed{" in generated_text:
                     logger.info("检测到最终答案或结束标记，停止生成。")
+                    break
+                elif gen_tokens>=self.max_gen_tokens:
+                    logger.warning(f"超出最大token限制:{self.max_gen_tokens}")
                     break
             else:
                 logger.error("Step execution failed")

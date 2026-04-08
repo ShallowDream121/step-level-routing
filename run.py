@@ -1,6 +1,7 @@
 import argparse
 import subprocess
 import sys
+import random
 import time
 import os
 import json
@@ -9,7 +10,7 @@ import signal
 import yaml
 import glob
 import requests
-import vllm_router
+import vllm_plan_router
 import vllm_small
 import traceback
 from lm_eval import evaluator, tasks
@@ -267,13 +268,15 @@ def main():
                 "do_sample": True,
                 "until": ["</think>"],                 
                 "add_bos_token": False
+            
             }
+            current_seed = int(time.time() * 1000) % 100000
 
             results = None
             if args.mode == "mix":
                 logger.info("使用混合路由进行评估...")
                 results = evaluator.simple_evaluate(
-                    model="vllm_router",       
+                    model="vllm_plan_router",       
                     model_args=model_args_dict,  
                     tasks=final_task_list,       
                     batch_size=str(args.batch_size),
@@ -297,10 +300,10 @@ def main():
                     log_samples=True,
                     gen_kwargs=gen_kwargs_override,
                     apply_chat_template=args.apply_chat_template,
-                    random_seed=0,
-                    numpy_random_seed=1234,
-                    torch_random_seed=1234,
-                    fewshot_random_seed=1234,
+                    random_seed=current_seed,
+                    numpy_random_seed=current_seed,
+                    torch_random_seed=current_seed,
+                    fewshot_random_seed=current_seed,
                     limit=args.limit,
                     num_fewshot=args.num_fewshot if args.num_fewshot else None
                 )
