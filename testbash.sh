@@ -6,12 +6,13 @@ if [ -f .env ]; then
 fi
 
 #export SMALL_ONLY=1
+#export LARGE_ONLY=1
 export VLLM_WORKER_MULTIPROC_METHOD='spawn'
 
 BIG_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Qwen-7B"
 SMALL_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Qwen-1.5B"
 
-MODE="mix"
+MODE="big_only" 
 BIG_GPU="0"
 SMALL_GPU="1"
 
