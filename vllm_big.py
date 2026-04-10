@@ -109,28 +109,12 @@ class VLLMBIG(LM):
         except Exception:
             return "\n".join([f"{m['role']}: {m['content']}" for m in messages])
 
-
-    def _get_initial_prompt_text(self, messages: List[Dict[str, str]]) -> str:
-        try:
-            prompt = self.tokenizer_large.apply_chat_template(
-                messages, 
-                tokenize=False, 
-                add_generation_prompt=False
-            )
-            return prompt.rstrip()
-        except Exception as e:
-            logger.warning(f"应用聊天模板失败: {e}。回退到纯文本拼接。")
-            text = ""
-            for msg in messages:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                text += f"{role}: {content}\n"
-            text += "assistant: "
-            return text
     def _run_speculative_routing(self, messages: List[Dict[str, str]], stop_sequences: List[str]) -> str:  
         logger.info(f"[Routing] 启动 , 使用大模型:{self.large_model_name}")
 
-        prompt_text = self._get_initial_prompt_text(messages)
+        prompt_text = self.tokenizer_large.apply_chat_template(messages, tokenize=False, 
+                add_generation_prompt=False
+            ).rstrip()
 
         if self.debug:
             print(f"初始 Prompt 长度: {len(prompt_text)} chars", flush=True)

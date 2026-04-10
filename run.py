@@ -11,8 +11,10 @@ import yaml
 import glob
 import requests
 import vllm_plan_router
+import vllm_router
 import vllm_small
 import vllm_big
+import vllm_random
 import traceback
 from lm_eval import evaluator, tasks
 from lm_eval.tasks import TaskManager 
@@ -25,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 def start_vllm_server(model_path, port, gpu_id):
+    random_seed = random.randint(1, 1000000)
     cmd = [
         sys.executable, 
         "-m", "vllm.entrypoints.openai.api_server",
@@ -36,6 +39,7 @@ def start_vllm_server(model_path, port, gpu_id):
         "--gpu-memory-utilization", "0.9",
         "--max-model-len", "32768",  
         "--max-logprobs", "20",    
+        "--seed", str(random_seed),
         "--disable-log-stats",
         "--enforce-eager"  
     ]
@@ -154,7 +158,7 @@ def main():
     
     procs = []
     try:
-        if args.mode == "mix" or args.mode == "small_only":
+        if not args.mode == "big_only":
             logger.info(f"正在启动小模型服务: {args.small_model} (Port: {args.small_port})")
             p_small = start_vllm_server(args.small_model, args.small_port, args.small_gpu)
             print("Waiting for small model...")
@@ -162,7 +166,7 @@ def main():
                 raise RuntimeError("Small model failed to start")
             procs.append(p_small)
             
-        if args.mode == "mix" or args.mode == "large_only":
+        if not args.mode == "small_only":
             logger.info(f"正在启动大模型服务: {args.big_model} (Port: {args.large_port})")
             p_large = start_vllm_server(args.big_model, args.large_port, args.big_gpu)
             print("Waiting for large model...")
@@ -206,61 +210,6 @@ def main():
         final_task_list = args.tasks.split(",") if isinstance(args.tasks, str) else args.tasks
         
         logger.info(f"即将执行的任务列表: {final_task_list}")
-        
-        #logger.info("开始解析任务列表...")
-        #
-        #for task_item in raw_tasks:
-        #    if os.path.isdir(task_item):
-        #        logger.info(f"检测到自定义任务目录: {task_item}")
-        #        abs_path = os.path.abspath(task_item)
-        #        include_paths.append(abs_path)
-#
-        #        yaml_files = glob.glob(os.path.join(abs_path, "*.yaml")) + \
-        #                     glob.glob(os.path.join(abs_path, "*.yml"))
-        #        
-        #        if not yaml_files:
-        #            logger.warning(f"目录 {task_item} 中未找到 .yaml 或 .yml 文件！")
-        #            continue
-        #        
-        #        for yf in yaml_files:
-        #            try:
-        #                with open(yf, 'r', encoding='utf-8') as f:
-        #                    config = yaml.safe_load(f)
-        #                
-        #                if isinstance(config, dict) and 'task' in config:
-        #                    t_name = config['task']
-        #                    final_task_list.append(t_name)
-        #                    logger.info(f"  解析到任务: {t_name} (来自 {yf})")
-        #                elif isinstance(config, list):
-        #                    for sub in config:
-        #                        if isinstance(sub, dict) and 'task' in sub:
-        #                            t_name = sub['task']
-        #                            final_task_list.append(t_name)
-        #                            logger.info(f"  解析到任务: {t_name} (来自 {yf})")
-        #            except Exception as e:
-        #                logger.error(f"  读取 {yf} 失败: {e}")
-        #    else:
-        #        final_task_list.append(task_item)
-        #        logger.info(f"  识别为内置任务: {task_item}")
-#
-        #if not final_task_list:
-        #    logger.error("错误：最终任务列表为空！请检查 --tasks 参数。")
-        #    sys.exit(1)
-#
-        #logger.info(f"正在初始化 TaskManager，包含路径: {include_paths}")
-        #if include_paths:
-        #    current_env = os.environ.get("LM_EVAL_INCLUDE_PATH", "")
-        #    new_paths = ",".join(include_paths)
-        #    if current_env:
-        #        os.environ["LM_EVAL_INCLUDE_PATH"] = f"{current_env},{new_paths}"
-        #    else:
-        #        os.environ["LM_EVAL_INCLUDE_PATH"] = new_paths
-        #    logger.info(f"已设置环境变量 LM_EVAL_INCLUDE_PATH: {os.environ['LM_EVAL_INCLUDE_PATH']}")
-#
-        #task_manager = TaskManager(include_path=include_paths)
-        #logger.info("TaskManager 初始化成功。")
-#
-        #logger.info(f"即将执行的任务列表: {final_task_list}")
 
         try:
             logger.info("开始运行 simple_evaluate (这可能需要几分钟)...")
@@ -271,13 +220,29 @@ def main():
                 "add_bos_token": False
             
             }
-            current_seed = int(time.time() * 1000) % 100000
 
             results = None
             if args.mode == "mix":
                 logger.info("使用混合路由进行评估...")
                 results = evaluator.simple_evaluate(
                     model="vllm_plan_router",       
+                    model_args=model_args_dict,  
+                    tasks=final_task_list,       
+                    batch_size=str(args.batch_size),
+                    log_samples=True,
+                    gen_kwargs=gen_kwargs_override,
+                    apply_chat_template=args.apply_chat_template,
+                    random_seed=0,
+                    numpy_random_seed=1234,
+                    torch_random_seed=1234,
+                    fewshot_random_seed=1234,
+                    limit=args.limit,
+                    num_fewshot=args.num_fewshot if args.num_fewshot else None
+                )
+            elif args.mode == "random":
+                logger.info("使用随机路由进行评估...")
+                results = evaluator.simple_evaluate(
+                    model="vllm_random",       
                     model_args=model_args_dict,  
                     tasks=final_task_list,       
                     batch_size=str(args.batch_size),
@@ -318,10 +283,10 @@ def main():
                     log_samples=True,
                     gen_kwargs=gen_kwargs_override,
                     apply_chat_template=args.apply_chat_template,
-                    random_seed=current_seed,
-                    numpy_random_seed=current_seed,
-                    torch_random_seed=current_seed,
-                    fewshot_random_seed=current_seed,
+                    random_seed=0,
+                    numpy_random_seed=1234,
+                    torch_random_seed=1234,
+                    fewshot_random_seed=1234,
                     limit=args.limit,
                     num_fewshot=args.num_fewshot if args.num_fewshot else None
                 )

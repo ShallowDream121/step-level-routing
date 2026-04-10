@@ -45,25 +45,27 @@ class VLLMPlanRouter(LM):
         self.max_gen_tokens = int(max_gen_tokens)
         self.step_tag = step_tag
 
-        self.plan_system_prompt = ("""You are an expert Task Planner. Your ONLY goal is to analyze a user's problem and break it down into a logical sequence of steps for a smaller model to execute.
-
-        **CRITICAL CONSTRAINTS:**
-        1.  **DO NOT SOLVE THE PROBLEM:** You must strictly output ONLY the plan. Do NOT perform any calculations, do NOT derive variables (e.g., do not find 'x' or 's'), and do NOT provide the final answer.
-        2.  **NO CHAIN OF THOUGHT LEAKAGE:** Do not output conversational filler like "Let's solve this," "First I will," or "Wait, actually."
-        3.  **STRICT OUTPUT FORMAT:** Your response must contain ONLY the text between the `START` and `END` tags. Nothing before, nothing after.
-        4.  **ATOMIC STEPS:** Break down complex tasks into small, specific steps. Avoid vague phrases like "Perform calculations." Instead, specify "Calculate X using formula Y."
-
-        **Output Example:**
-        START
-        1. Extract the distance (d) and speed (v) from the problem description.
-        2. Calculate the time taken using the formula t = d / v.
-        3. Convert the time from hours to minutes by multiplying by 60.
-        4. Add the waiting time 't' to the calculated travel time.
-        END
-
-        **Output Instructions:**
-        Analyze the user's problem and generate the plan strictly following the format above.
-        """)
+        self.plan_system_prompt = (
+            "### SYSTEM ROLE\n"
+            "You are a **Task Planning Engine**. You do NOT solve problems. You ONLY output a plan for a solver.\n"
+            "\n"
+            "### STRICT RULES\n"
+            "1. NEVER output the solution, calculations, or final answer.\n"
+            "2. NEVER start with conversational text like 'Okay', 'Here is the plan', or 'Let's analyze'.\n"
+            "3. Your output must start immediately with the tag `START` and end with `END`.\n"
+            "\n"
+            "### EXAMPLE\n"
+            "User: A car travels 100km. It takes 2 hours. Find speed.\n"
+            "Assistant:\n"
+            "START\n"
+            "1. Identify distance (d=100) and time (t=2).\n"
+            "2. Apply formula: speed = distance / time.\n"
+            "3. Calculate speed = 100 / 2.\n"
+            "END\n"
+            "\n"
+            "### YOUR TURN\n"
+            "Analyze the user's request and output the plan between START and END tags."
+        )
         self.system_prompt = (
             "You are a reasoning assistant. You must solve the problem step by step. "
             "I will provide you with a PLAN and ask you to execute one step at a time with **English**. "
@@ -93,6 +95,7 @@ class VLLMPlanRouter(LM):
         self.stats = {
             "total_requests": 0,
             "fallback_to_large": 0,
+            "plan_tokens": 0,
             "tokens_generated_by_small": 0,
             "tokens_generated_by_large": 0,
         }
@@ -134,7 +137,7 @@ class VLLMPlanRouter(LM):
             payload["stop"] = stop_sequences
 
         try:
-            response = self.session.post(endpoint, json=payload, timeout=300)
+            response = self.session.post(endpoint, json=payload, timeout=None)
             
             if response.status_code == 200:
                 data = response.json()
@@ -190,8 +193,7 @@ class VLLMPlanRouter(LM):
                 line = line.strip()
                 if re.match(r'^\d+\.', line):
                     step_content = re.sub(r'^\d+\.\s*', '', line)
-                    if len(step_content) > 5:
-                        steps.append(step_content)
+                    steps.append(step_content)
             return steps if steps else ["Execute the task step by step."]
 
         plan_content = match.group(1)
@@ -202,8 +204,7 @@ class VLLMPlanRouter(LM):
             line = line.strip()
             if re.match(r'^\d+\.', line):
                 clean_step = re.sub(r'^\d+\.\s*', '', line)
-                if len(clean_step) > 5:
-                    steps.append(clean_step)
+                steps.append(clean_step)
 
         return steps if steps else ["Perform the necessary calculations."]
 
@@ -214,16 +215,19 @@ class VLLMPlanRouter(LM):
             {"role": "user", "content": messages[0]['content']}
         ]
 
-        prompt_text = self.tokenizer_large.apply_chat_template(plan_messages, tokenize=False, add_generation_prompt=True)
+        prompt_text = self.tokenizer_small.apply_chat_template(plan_messages, tokenize=False, add_generation_prompt=False).rstrip()
+
+        prompt_text+="START\n"
+
         if self.debug:
-            self.print_preview(prompt_text, 200)
+            self.print_preview(prompt_text, 250)
 
         plan_res = self._call_vllm_api(
-            url=self.large_url,
-            model_name=self.large_model_name,
+            url=self.small_url,
+            model_name=self.small_model_name,
             prompt_text=prompt_text,
             max_tokens=self.max_step_tokens,
-            stop_sequences=[],
+            stop_sequences=["</think>"],
             get_logprobs=False
         )
         
@@ -231,13 +235,15 @@ class VLLMPlanRouter(LM):
         planned_steps = []
         if plan_res and "choices" in plan_res:
             plan_text = plan_res["choices"][0]["text"]
+            plan_token_ids = self.tokenizer_small.encode(plan_text, add_special_tokens=False)
+            self.stats['plan_tokens'] += len(plan_token_ids)
             planned_steps = self.parse_plan(plan_text)
             logger.info(f"Plan parsed: {len(planned_steps)} steps")
         else:
             logger.warning("Plan parsing failed, using default method.")
             planned_steps = ["Solve the problem step by step."]
 
-        #print(f"全文：{plan_text}")
+        print(f"全文：{plan_text}")
         plan_text_for = ""
         for step_idx, step_desc in enumerate(planned_steps):
             plan_text_for +=f"{step_idx+1}.{step_desc}"
@@ -268,7 +274,7 @@ class VLLMPlanRouter(LM):
             current_prompt_text = tokenizer.apply_chat_template(
                 current_messages, 
                 tokenize=False, 
-                add_generation_prompt=True 
+                add_generation_prompt=False
             )
             if self.debug:
                 self.print_preview(current_prompt_text, 200)
@@ -303,8 +309,7 @@ class VLLMPlanRouter(LM):
                 source = 1 if use_large_model else 0
                 all_generated_segments.append({
                     "ids": new_token_ids,
-                    "source": source,
-                    "text": generated_text
+                    "source": source
                 })
                 
                 if use_large_model:
@@ -396,6 +401,7 @@ class VLLMPlanRouter(LM):
             print("Routing Statistics:")
             print(f"   Total Requests: {total}")
             print(f"   Fallbacks: {self.stats['fallback_to_large']}")
+            print(f"   Tokens for Plan: {self.stats['plan_tokens']}")
             s_tok = self.stats['tokens_generated_by_small']
             l_tok = self.stats['tokens_generated_by_large']
             print(f"   Tokens (Small/Large): {s_tok} / {l_tok}")
