@@ -11,7 +11,7 @@ export VLLM_WORKER_MULTIPROC_METHOD='spawn'
 BIG_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Qwen-7B"
 SMALL_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Qwen-1.5B"
 
-MODE="random" 
+MODE="steer" 
 BIG_GPU="0"
 SMALL_GPU="1"
 
@@ -19,9 +19,9 @@ SMALL_PORT=8001
 LARGE_PORT=8002
 
 TASKS="aime24_nofigures"
-OUTPUT_PATH="./log_traces/1.5B-7B-random-aime24"
+OUTPUT_PATH="./log_traces/1.5B-7B-steer/test"
 
-CONFIDENCE_THRESHOLD=0.7
+CONFIDENCE_THRESHOLD=0
 MAX_STEP_TOKENS=16384
 MAX_GEN_TOKENS=16384
 LIMIT=""  

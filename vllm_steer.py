@@ -45,12 +45,10 @@ class VLLMSteer(LM):
             self.confidence_threshold = 0.7
 
         self.max_step_tokens = max_step_tokens
-        self.max_gen_tokens = max_gen_tokens
+        self.max_gen_tokens = int(max_gen_tokens)
 
         self.max_steps = int(max_gen_tokens) // int(max_step_tokens) + 1
         self.step_tag = step_tag
-        if "/n/n" not in self.step_tag:
-            self.step_tag = "/n/n" + self.step_tag
 
         self.log_file_path = "confidence_log.csv"
 
@@ -168,9 +166,7 @@ class VLLMSteer(LM):
         all_generated_segments = []
         force_large_model_this_step = False
         step_count = 0
-
-        with open(self.log_file_path, mode='a', newline='', encoding='utf-8') as csvfile:
-            writer = csv.writer(csvfile)
+        gen_tokens = 0
 
         while True:
             current_step = step_count + 1
@@ -200,7 +196,7 @@ class VLLMSteer(LM):
                 model_name=model_name,
                 prompt_text=current_raw_text,
                 max_tokens=self.max_step_tokens,
-                stop_sequences=stop_sequences + [self.step_tag],
+                stop_sequences=["\n\n"],
                 get_logprobs=True
             )
 
@@ -218,8 +214,9 @@ class VLLMSteer(LM):
                     "ids": new_token_ids,
                     "source": source
                 })
-
-                writer.writerow([current_step, f"{confidence:.5f}", source, len(new_token_ids)])
+                with open(self.log_file_path, mode='a', newline='', encoding='utf-8') as csvfile:
+                    writer = csv.writer(csvfile)
+                    writer.writerow([current_step, f"{confidence:.5f}", source, len(new_token_ids)])
 
                 if use_large_model:
                     self.stats["tokens_generated_by_large"] += len(new_token_ids)
@@ -242,7 +239,7 @@ class VLLMSteer(LM):
 
                 current_raw_text += generated_text
 
-                if "\\boxed{" in generated_text:
+                if "\\boxed{" in generated_text or "</think>" in generated_text:
                     logger.info("检测到最终答案或结束标记，停止生成。")
                     break
                 elif gen_tokens>=self.max_gen_tokens:
@@ -302,9 +299,6 @@ class VLLMSteer(LM):
             clean_context = context
             
             final_messages = []
-            if self.system_prompt:
-                final_messages.append({"role": "system", "content": self.system_prompt})
-            
             final_messages.append({"role": "user", "content": clean_context})
 
             try:
