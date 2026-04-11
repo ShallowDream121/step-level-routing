@@ -15,6 +15,7 @@ import vllm_router
 import vllm_small
 import vllm_big
 import vllm_random
+import vllm_steer
 import traceback
 from lm_eval import evaluator, tasks
 from lm_eval.tasks import TaskManager 
@@ -243,6 +244,23 @@ def main():
                 logger.info("使用随机路由进行评估...")
                 results = evaluator.simple_evaluate(
                     model="vllm_random",       
+                    model_args=model_args_dict,  
+                    tasks=final_task_list,       
+                    batch_size=str(args.batch_size),
+                    log_samples=True,
+                    gen_kwargs=gen_kwargs_override,
+                    apply_chat_template=args.apply_chat_template,
+                    random_seed=0,
+                    numpy_random_seed=1234,
+                    torch_random_seed=1234,
+                    fewshot_random_seed=1234,
+                    limit=args.limit,
+                    num_fewshot=args.num_fewshot if args.num_fewshot else None
+                )
+            elif args.mode == "steer":
+                logger.info("使用Steer进行评估...")
+                results = evaluator.simple_evaluate(
+                    model="vllm_steer",       
                     model_args=model_args_dict,  
                     tasks=final_task_list,       
                     batch_size=str(args.batch_size),
