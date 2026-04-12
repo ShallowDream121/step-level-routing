@@ -46,8 +46,6 @@ class VLLMSteer(LM):
 
         self.max_step_tokens = max_step_tokens
         self.max_gen_tokens = int(max_gen_tokens)
-
-        self.max_steps = int(max_gen_tokens) // int(max_step_tokens) + 1
         self.step_tag = step_tag
 
         self.log_file_path = "confidence_log.csv"
@@ -151,7 +149,7 @@ class VLLMSteer(LM):
 
         
     def _run_speculative_routing(self, messages: List[Dict[str, str]], stop_sequences: List[str]) -> str:        
-        logger.info(f"[Routing] 启动 | 最大步数: {self.max_steps} | 阈值: {self.confidence_threshold}")
+        logger.info(f"[Routing] 启动 | 阈值: {self.confidence_threshold}")
         
         try:
             current_raw_text = self.tokenizer_small.apply_chat_template(
@@ -214,16 +212,14 @@ class VLLMSteer(LM):
                     "ids": new_token_ids,
                     "source": source
                 })
-                with open(self.log_file_path, mode='a', newline='', encoding='utf-8') as csvfile:
-                    writer = csv.writer(csvfile)
-                    writer.writerow([current_step, f"{confidence:.5f}", source, len(new_token_ids)])
+                #with open(self.log_file_path, mode='a', newline='', encoding='utf-8') as csvfile:
+                #    writer = csv.writer(csvfile)
+                #    writer.writerow([current_step, f"{confidence:.5f}", source, len(new_token_ids)])
 
                 if use_large_model:
                     self.stats["tokens_generated_by_large"] += len(new_token_ids)
                 else:
                     self.stats["tokens_generated_by_small"] += len(new_token_ids)
-                gen_tokens += len(new_token_ids)
-
 
                 if not use_large_model and confidence < self.confidence_threshold and step_count == 0:
                     logger.info(f"Step {current_step} 首步小模型置信度低 ({confidence:.3f})，直接切换到大模型")
@@ -237,6 +233,8 @@ class VLLMSteer(LM):
                     logger.info(f"Step {current_step} Confidence OK ({confidence:.3f})")
                     force_large_model_this_step = False
 
+                gen_tokens += len(new_token_ids)
+                generated_text += "\n\n"
                 current_raw_text += generated_text
 
                 if "\\boxed{" in generated_text or "</think>" in generated_text:
