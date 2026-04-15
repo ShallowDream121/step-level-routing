@@ -91,8 +91,6 @@ target_data = gsm8k_train_data
 print(f"开始处理数据...")
 
 for i, item in enumerate(target_data):
-    if i < 1470:
-        continue
     q = item['question']
     print(f"[{i+1}/{len(target_data)}] 处理中: {q[:40]}...")
 
@@ -107,7 +105,7 @@ for i, item in enumerate(target_data):
         processed_data.append(data_entry)
 
         if (i + 1) % 10 == 0:
-            with open(output_file, "a", encoding="utf-8") as f:
+            with open(output_file, "w", encoding="utf-8") as f:
                 json.dump(processed_data, f, ensure_ascii=False, indent=2)
             print(f"已保存 {len(processed_data)} 条数据到 {output_file}")
 
@@ -115,7 +113,7 @@ for i, item in enumerate(target_data):
     else:
         print(f" 第 {i+1} 条数据处理失败，跳过。")
 
-with open(output_file, "a", encoding="utf-8") as f:
+with open(output_file, "w", encoding="utf-8") as f:
     json.dump(processed_data, f, ensure_ascii=False, indent=2)
 
 print(f"全部完成！共生成 {len(processed_data)} 条有效数据。")
