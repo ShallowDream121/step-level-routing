@@ -3,6 +3,7 @@ import requests
 import math
 import time
 import json
+import csv
 import logging
 from typing import List, Optional, Dict, Any, Tuple
 from lm_eval.api.model import LM
@@ -12,16 +13,6 @@ from tqdm import tqdm
 from transformers import AutoTokenizer 
 import re
 from collections import Counter
-
-SYSTEM_PROMPT = (
-    "You are a reasoning assistant. You must solve the problem step by step. "
-    "CRITICAL REQUIREMENT: "
-    "1.You must use English."
-    "2.After completing EACH logical step, you MUST output the tag '</step>'"
-    "Do not output the final answer until you have gone through all necessary steps. "
-    "Put your final answer within \\boxed{}."
-    "Example format:\n<think>\\nStep 1 analysis... </step>\\nStep 2 calculation... </step>\\n...\\nTherefore, the answer is \\boxed{204}. </think>"
-)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -37,7 +28,7 @@ class VLLMRouter(LM):
         confidence_threshold: float = 0.7,
         max_step_tokens: int = 2048,
         max_gen_tokens: int = 16384,
-        step_tag: str = "</step>",
+        step_tag: str = "",
         debug: bool = False,
         **kwargs
     ):
@@ -58,7 +49,8 @@ class VLLMRouter(LM):
 
         self.max_steps = int(max_gen_tokens) // int(max_step_tokens) + 1
         self.step_tag = step_tag
-        self.system_prompt = SYSTEM_PROMPT
+
+        self.log_file_path = "confidence_log_blocks.csv"
 
         self.eos_tokens = [
             "<｜end▁of▁sentence｜>",
@@ -320,10 +312,11 @@ class VLLMRouter(LM):
                     break
 
             # ================= 更新上下文 =================
+            source = 1 if use_large_model else 0
             if new_token_ids:
                 all_generated_segments.append({
                     "ids": new_token_ids,
-                    "source": 1 if use_large_model else 0,
+                    "source": source,
                     "text": generated_text
                 })
                 
@@ -350,6 +343,10 @@ class VLLMRouter(LM):
                 
                 if finish_reason == "length":
                     logger.info("   达到单步最大长度，自动继续下一步。")
+
+                #with open(self.log_file_path, mode='a', newline='', encoding='utf-8') as csvfile:
+                #    writer = csv.writer(csvfile)
+                #    writer.writerow([current_step, f"{confidence:.5f}", source, len(new_token_ids)])
                 
                 if not use_large_model and confidence < self.confidence_threshold:
                     logger.info(f"   置信度 ({confidence:.3f}) 低于阈值，*下一步* 切换大模型。")
@@ -411,15 +408,9 @@ class VLLMRouter(LM):
             if isinstance(stop_sequences, str):
                 stop_sequences = [stop_sequences]
             
-            if self.step_tag not in stop_sequences:
-                stop_sequences.append(self.step_tag)
-            
             clean_context = context
             
             final_messages = []
-            if self.system_prompt:
-                final_messages.append({"role": "system", "content": self.system_prompt})
-            
             final_messages.append({"role": "user", "content": clean_context})
 
             try:

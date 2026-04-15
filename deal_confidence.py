@@ -2,7 +2,7 @@ import numpy as np
 
 confidences = []
 
-with open('confidence_log.csv', 'r', encoding='utf-8') as f:
+with open('confidence_log_blocks.csv', 'r', encoding='utf-8') as f:
     for line in f:
         parts = line.strip().split(',')
         if len(parts) >= 2:
