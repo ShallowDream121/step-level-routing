@@ -1,0 +1,10 @@
+{
+  "train_data_gsm8k": {
+    "file_name": "train_data_gsm8k.json",
+    "columns": {
+      "prompt": "instruction",
+      "query": "input",
+      "response": "output"
+    }
+  }
+}

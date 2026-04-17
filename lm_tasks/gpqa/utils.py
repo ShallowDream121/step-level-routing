@@ -6,13 +6,16 @@ from typing import Dict, List, Union
 from decimal import Decimal, InvalidOperation
 
 if os.getenv("USE_TEMPLATE", "0") == "1":
-    QUERY_TEMPLATE = 'You are a reasoning assistant. You must solve the problem step by step. CRITICAL REQUIREMENT:  '\
-    '1.You must use English.' \
-    '2.Do not output the final answer until you have gone through all necessary steps.'\
-    '3.Choose the best answer from the four choices marked A, B, C, and D.' \
-    'Put your final answer within \\boxed{{}}. '\
-    'Example format:\n<think>\\n...\\nTherefore, the answer is \\boxed{{A}}. </think> '\
-    '{question}\n' \
+    QUERY_TEMPLATE = 'You are a reasoning assistant. You must solve the problem step by step.\n ' \
+    'CRITICAL REQUIREMENT:  '\
+    '1.You must use English.\n ' \
+    '2.Do not output the final answer until you have gone through all necessary steps.\n'\
+    '3.Choose the best answer from the four choices marked A, B, C, and D.\n' \
+    'You Must put your final answer within \\boxed{{}}.For example, if the answer is A, output \\boxed{{A}}\n'\
+    'Example format:\n' \
+    '<｜User｜>...Question...<｜Assistant｜><think>\n' \
+    '[Reasoning steps here without conversational filler], Therefore, the answer is \\boxed{{A}}. </think> <｜end▁of▁sentence｜>' \
+    'Question: {question}\n' \
     'Choice A: {choice1}\n' \
     'Choice B: {choice2}\n' \
     'Choice C: {choice3}\n' \
@@ -75,13 +78,20 @@ def process_results(doc: Dict, results: List[str]):
             if match:
                 extracted_answer = match.group(1).strip().upper()
                 break
-
+    
     if extracted_answer is None:
-        first_line = raw_pred.strip().split('\n')[0].strip()
-        if re.match(r'^[A-D]\.?$', first_line):
-             extracted_answer = first_line.replace('.', '')
-        else:
-             extracted_answer = ""
+        sentences = re.split(r'[.\n]', raw_pred)
+
+        for sentence in reversed(sentences):
+            sentence = sentence.strip()
+            option_match = re.search(r'(?:Option|Choice)\s*[\(\s]*([A-D])[\)\s]*', sentence, re.IGNORECASE)
+            
+            if option_match:
+                extracted_answer = option_match.group(1).upper()
+                break 
+    
+    if extracted_answer is None:
+        extracted_answer = ""
 
     pred_normalized = extracted_answer.upper()
 
