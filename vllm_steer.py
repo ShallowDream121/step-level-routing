@@ -48,7 +48,7 @@ class VLLMSteer(LM):
         self.max_gen_tokens = int(max_gen_tokens)
         self.step_tag = step_tag
 
-        self.log_file_path = "confidence_log.csv"
+        self.log_file_path = "./confidence/confidence_log_gpqa.csv"
 
         print(f"Loading Small Model Tokenizer: {small_model_name}...")
         self.tokenizer_small = AutoTokenizer.from_pretrained(small_model_name, trust_remote_code=True)

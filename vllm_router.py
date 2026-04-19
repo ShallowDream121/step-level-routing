@@ -50,7 +50,7 @@ class VLLMRouter(LM):
         self.max_steps = int(max_gen_tokens) // int(max_step_tokens) + 1
         self.step_tag = step_tag
 
-        self.log_file_path = "confidence_log_blocks.csv"
+        self.log_file_path = "./confidence/confidence_log_blocks_gpqa.csv"
 
         self.eos_tokens = [
             "<｜end▁of▁sentence｜>",
@@ -344,9 +344,9 @@ class VLLMRouter(LM):
                 if finish_reason == "length":
                     logger.info("   达到单步最大长度，自动继续下一步。")
 
-                #with open(self.log_file_path, mode='a', newline='', encoding='utf-8') as csvfile:
-                #    writer = csv.writer(csvfile)
-                #    writer.writerow([current_step, f"{confidence:.5f}", source, len(new_token_ids)])
+                with open(self.log_file_path, mode='a', newline='', encoding='utf-8') as csvfile:
+                    writer = csv.writer(csvfile)
+                    writer.writerow([current_step, f"{confidence:.5f}", source, len(new_token_ids)])
                 
                 if not use_large_model and confidence < self.confidence_threshold:
                     logger.info(f"   置信度 ({confidence:.3f}) 低于阈值，*下一步* 切换大模型。")

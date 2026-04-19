@@ -1,10 +1,28 @@
-{
-  "train_data_gsm8k": {
-    "file_name": "train_data_gsm8k.json",
+{ 
+  "gsm8k_steps": {
+    "file_name": "train_data_gsm8k_new.json",
+    "formatting": "alpaca",
     "columns": {
       "prompt": "instruction",
       "query": "input",
       "response": "output"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content"
+    }
+  },
+  "math_steps": {
+    "file_name": "train_data_math_new.json",
+    "formatting": "alpaca",
+    "columns": {
+      "prompt": "instruction",
+      "query": "input",
+      "response": "output"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content"
     }
   }
 }

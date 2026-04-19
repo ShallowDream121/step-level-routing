@@ -56,7 +56,7 @@ def generate_reasoning_data(question, max_retries=3):
     for attempt in range(max_retries):
         try:
             response = dashscope.Generation.call( 
-                model="qwen-max-0428", 
+                model="qwen-max-0919", 
                 messages=[{'role': 'user', 'content': full_prompt}]
             )
                         
@@ -74,24 +74,24 @@ def generate_reasoning_data(question, max_retries=3):
 
 # ================= 主程序 =================
 
-print("正在加载 GSM8K 数据集...")
+print("正在加载 MATH 数据集...")
 try:
-    raw_dataset = load_dataset("gsm8k", "main")
-    gsm8k_train_data = raw_dataset['train'].to_list()
-    print(f"数据集加载成功，共 {len(gsm8k_train_data)} 条数据。")
+    raw_dataset = load_dataset("HuggingFaceH4/MATH-500", split="test") 
+    math_train_data = raw_dataset.to_list()
+    print(f"数据集加载成功，共 {len(math_train_data)} 条数据。")
 except Exception as e:
     print(f"数据集加载失败: {e}")
     exit()
 
 processed_data = []
-output_file = "train_data_gsm8k.json"
+output_file = "train_data_math.json"
 
-target_data = gsm8k_train_data
+target_data = math_train_data
 
 print(f"开始处理数据...")
 
 for i, item in enumerate(target_data):
-    q = item['question']
+    q = item['problem']
     print(f"[{i+1}/{len(target_data)}] 处理中: {q[:40]}...")
 
     formatted_output = generate_reasoning_data(q)
