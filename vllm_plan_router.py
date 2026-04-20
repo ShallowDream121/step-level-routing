@@ -46,19 +46,17 @@ class VLLMPlanRouter(LM):
         self.step_plan = step_plan
 
         self.system_prompt = (
-            "You are an expert Reasoning Assistant participating in a multi-turn conversation.\n"
-            "Your goal is to solve complex problems by following a strict step-by-step plan provided by the user.\n"
-            "\n"
-            "### INSTRUCTIONS ###\n"
-            "1. **Analyze History**: Read the conversation history carefully. The previous steps contain essential information and intermediate results you MUST use.\n"
-            "2. **Focus on Current Task**: The user's latest message contains the **Current Step**. Execute ONLY this step.\n"
-            "3. **No Anticipation**: Do NOT attempt to solve future steps or predict the next questions. Stop immediately after answering the current one.\n"
-            "4. **Language**: Use **English** for all reasoning and explanations.\n"
+            "You are a Step-by-Step Reasoning Engine designed to solve complex problems incrementally.\n"
+            "You will be provided with a complete context that includes a problem statement and the results of previous steps.\n"
+            "### CONTEXT RULE ###\n"
+            "1. **Previous Results are Facts**: Everything stated in the 'Previous Reasoning' section is true and has already been calculated. DO NOT recalculate or restate these facts.\n"
+            "2. **Current Task**: Your job is to read the 'Current Step' instruction and append the solution to the reasoning chain.\n"
+            "3. **Strict Isolation**: Solve ONLY the current step. Do not look ahead or solve future steps.\n"
             "\n"
             "### OUTPUT FORMAT ###\n"
-            "- Provide clear, logical reasoning leading to your answer.\n"
-            "- If the step requires a final value or conclusion, enclose it in \\boxed{{}}.\n"
-            "- End your response immediately with the tag '</think>' to signal completion."
+            "- Write clear, logical reasoning in English.\n"
+            "- If the step produces a numerical result or a final conclusion, enclose it in \\boxed{{}}.\n"
+            "- End your response immediately with the stop tag '</think>'\n"
         )
         
         self.eos_tokens = ["<｜end▁of▁sentence｜>", "</s>", "</refer>final<|im_message|>", "[END]", "<eos>"]
@@ -160,11 +158,17 @@ class VLLMPlanRouter(LM):
         return sum(probs) / len(probs) if probs else 0.0
 
     def _run_routing(self, messages: List[Dict[str, str]], stop_sequences: List[str], steps: List[str]) -> str:
-        logger.info(f"[Message-Based Routing] 启动 | 阈值: {self.confidence_threshold}")
-
-        conversation_history = messages.copy() 
-
-        all_generated_segments = [] 
+        logger.info(f"[Text-Concatenation Routing] 启动 | 阈值: {self.confidence_threshold}")
+        full_context_str = ""
+        
+        system_content = self.tokenizer_large.apply_chat_template(
+                messages, 
+                tokenize=False, 
+                add_generation_prompt=False
+            )
+        full_context_str += system_content + "\n\n"
+        
+        all_generated_segments = []
         force_large_model_this_step = False
         gen_tokens = 0
 
@@ -174,45 +178,37 @@ class VLLMPlanRouter(LM):
         for step_idx, step_desc in enumerate(steps):
             current_step = step_idx + 1
             use_large_model = force_large_model_this_step
-
             tokenizer_used = self.tokenizer_large if use_large_model else self.tokenizer_small
             url_used = self.large_url if use_large_model else self.small_url
             model_name = self.large_model_name if use_large_model else self.small_model_name
 
-            extra_prompt = ""
-            if step_idx == len(steps)-1:
-                extra_prompt = "Put your final answer in \\boxed{{}}\n"
-            current_task_message = {
-                "role": "user", 
-                "content": f"CURRENT STEP TASK:{step_desc}\n{extra_prompt}"
-            }
+            current_prompt = full_context_str 
 
-            temp_messages = conversation_history + [current_task_message]
+            current_prompt += "### CURRENT TASK"
+            current_prompt += step_desc + "\n\n"
+
+            current_prompt += "YOUR RESPONSE:\n"
 
             try:
-                prompt_text = tokenizer_used.apply_chat_template(
-                    temp_messages,
-                    tokenize=False,
-                    add_generation_prompt=True 
-                )
+                prompt_tokens = tokenizer_used.encode(current_prompt, add_special_tokens=False)
             except Exception as e:
-                logger.error(f"Template Error: {e}")
-                prompt_text = "\n".join([f"{m['role']}: {m['content']}" for m in temp_messages])
-
-            input_len = len(tokenizer_used.encode(prompt_text, add_special_tokens=False))
-            if input_len > 28000: # 留一点余量给生成
-                logger.warning(f"Context too long ({input_len} tokens). Using last 2 turns to avoid overflow...")
-
+                logger.error(f"Tokenization Error: {e}")
+                prompt_tokens = []
                 
-            if self.debug:
-                self.print_preview(prompt_text)
+            input_len = len(prompt_tokens)
+            
+            if input_len > 28000: 
+                logger.warning(f"Context too long ({input_len} tokens). Truncating...")
+                system_tokens = tokenizer_used.encode(system_content + "\n\n", add_special_tokens=False)
+                prompt_tokens = system_tokens + prompt_tokens[-2048:]
+                current_prompt = tokenizer_used.decode(prompt_tokens, skip_special_tokens=True)
 
             step_res = self._call_vllm_api(
                 url=url_used,
                 model_name=model_name,
-                prompt_text=prompt_text,
+                prompt_text=current_prompt,
                 max_tokens=self.max_step_tokens,
-                stop_sequences=stop_sequences, 
+                stop_sequences=stop_sequences,
                 get_logprobs=True,
                 temperature=0.7
             )
@@ -220,7 +216,6 @@ class VLLMPlanRouter(LM):
             if step_res and "choices" in step_res:
                 choice = step_res["choices"][0]
                 generated_text = choice.get("text", "")
-
                 logprobs_raw = choice.get("logprobs", None)
                 confidence = self._calculate_confidence(logprobs_raw)
 
@@ -236,11 +231,11 @@ class VLLMPlanRouter(LM):
                     self.stats["fallback_to_large"] += 1
                 else:
                     self.stats["tokens_generated_by_small"] += len(new_token_ids)
-                    
+                
                 gen_tokens += len(new_token_ids)
 
-                conversation_history.append({"role": "user", "content": f"### CURRENT STEP TASK\n{step_desc}"})
-                conversation_history.append({"role": "assistant", "content": generated_text})
+                full_context_str += current_prompt.replace("### YOUR RESPONSE\n", "") 
+                full_context_str += generated_text + "\n\n"
 
                 if not use_large_model and confidence < self.confidence_threshold:
                     logger.info(f"Step {current_step} Confidence Low ({confidence:.3f}), forcing Large model NEXT")
@@ -252,11 +247,9 @@ class VLLMPlanRouter(LM):
                 if gen_tokens >= self.max_gen_tokens:
                     logger.warning(f"超出最大token限制: {self.max_gen_tokens}")
                     break
-                    
             else:
                 logger.error("Step execution failed")
-                conversation_history.append({"role": "user", "content": step_desc})
-                conversation_history.append({"role": "assistant", "content": "[ERROR: Step Failed]"})
+                full_context_str += "[ERROR: Step Failed]\n\n"
                 force_large_model_this_step = True
 
         return self._decode_mixed_segments(all_generated_segments)
