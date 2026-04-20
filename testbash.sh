@@ -5,26 +5,27 @@ if [ -f .env ]; then
     export $(grep -v '^#' .env | xargs)
 fi
 
-export USE_TEMPLATE=1
+#export USE_TEMPLATE=1
 export VLLM_WORKER_MULTIPROC_METHOD='spawn'
 
 BIG_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Qwen-7B"
 SMALL_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Qwen-1.5B"
 
-MODE="block" 
+MODE="mix" 
 BIG_GPU="0"
 SMALL_GPU="1"
 
 SMALL_PORT=8001
 LARGE_PORT=8002
 
-TASKS="gpqa_diamond_mine"
-OUTPUT_PATH="./log_traces/1.5B-7B-block-gpqa/test/"
+TASKS="aime24_nofigures"
+PLAN="./plans/aime_2024_plans.json"
+OUTPUT_PATH="./log_traces/1.5B-7B-plan-aime/test"
 
-CONFIDENCE_THRESHOLD=0
-MAX_STEP_TOKENS=1024
+CONFIDENCE_THRESHOLD=0.55
+MAX_STEP_TOKENS=16384
 MAX_GEN_TOKENS=16384
-LIMIT="--limit 80"  
+LIMIT="--limit 1"  
 NUM_FEWSHOT=0
 BATCH_SIZE="auto"
 
@@ -38,7 +39,8 @@ echo "   任务集: $TASKS"
 echo "=============================================================================="
 
 CMD=(
-    python run.py
+    python 
+    run.py
     --big_model "$BIG_MODEL"
     --mode "$MODE"
     --small_model "$SMALL_MODEL"
@@ -53,6 +55,7 @@ CMD=(
     --max_step_tokens "$MAX_STEP_TOKENS"
     --max_gen_tokens "$MAX_GEN_TOKENS"
     --num_fewshot "$NUM_FEWSHOT"
+    --plan "$PLAN"
 )
 
 if [ ! -z "$LIMIT" ]; then
@@ -60,7 +63,7 @@ if [ ! -z "$LIMIT" ]; then
 fi
 
 
-#CMD+=(--debug)
+CMD+=(--debug)
 CMD+=(--apply_chat_template)
 
 

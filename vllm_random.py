@@ -24,7 +24,7 @@ class VLLMRANDOM(LM):
         confidence_threshold: float = 0.7,
         max_step_tokens: int = 2048,
         max_gen_tokens: int = 16384,
-        step_tag: str = "",
+        step_plan: str = "",
         debug: bool = False,
         **kwargs
     ):
@@ -36,8 +36,6 @@ class VLLMRANDOM(LM):
         self.debug = debug
 
         self.max_gen_tokens = int(max_gen_tokens)
-
-        self.step_tag = step_tag
 
         logger.info(f"Loading Small Model Tokenizer: {small_model_name}...")
         self.tokenizer_small = AutoTokenizer.from_pretrained(small_model_name, trust_remote_code=True)

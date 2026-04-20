@@ -28,7 +28,7 @@ class VLLMSteer(LM):
         confidence_threshold: float = 0.7,
         max_step_tokens: int = 2048,
         max_gen_tokens: int = 16384,
-        step_tag: str = "/n/n",
+        step_plan: str = "",
         debug: bool = False,
         **kwargs
     ):
@@ -46,7 +46,6 @@ class VLLMSteer(LM):
 
         self.max_step_tokens = max_step_tokens
         self.max_gen_tokens = int(max_gen_tokens)
-        self.step_tag = step_tag
 
         self.log_file_path = "./confidence/confidence_log_gpqa.csv"
 
@@ -291,8 +290,8 @@ class VLLMSteer(LM):
             if isinstance(stop_sequences, str):
                 stop_sequences = [stop_sequences]
             
-            if self.step_tag not in stop_sequences:
-                stop_sequences.append(self.step_tag)
+            if "/n/n" not in stop_sequences:
+                stop_sequences.append("/n/n")
             
             clean_context = context
             

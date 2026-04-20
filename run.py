@@ -119,6 +119,10 @@ def parse_arguments():
         "--max_gen_tokens", type=int, default=16384, 
         help="Maximum total tokens to generate per sample."
     )
+    parser.add_argument(
+        "--plan", type=str,  
+        help="The plan file for the test."
+    )
     
     # --- lm-eval 参数 ---
     parser.add_argument(
@@ -198,6 +202,7 @@ def main():
             f"confidence_threshold={args.confidence_threshold},"
             f"max_step_tokens={args.max_step_tokens},"
             f"max_gen_tokens={args.max_gen_tokens},"
+            f"step_plan={args.plan},"
             f"debug={str(args.debug)}"
         )
         

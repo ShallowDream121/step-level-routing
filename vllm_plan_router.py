@@ -26,7 +26,7 @@ class VLLMPlanRouter(LM):
                  confidence_threshold: float = 0.7,
                  max_step_tokens: int = 2048,
                  max_gen_tokens: int = 16384,
-                 step_tag: str = "</step>",
+                 step_plan: str = "",
                  debug: bool = False,
                  **kwargs):
         super().__init__()
@@ -43,38 +43,20 @@ class VLLMPlanRouter(LM):
             
         self.max_step_tokens = max_step_tokens
         self.max_gen_tokens = int(max_gen_tokens)
-        self.step_tag = step_tag
+        self.step_plan = step_plan
 
-        self.plan_system_prompt = (
-            "### SYSTEM ROLE\n"
-            "You are a **Task Planning Engine**. You do NOT solve problems. You ONLY output a plan for a solver.\n"
-            "\n"
-            "### STRICT RULES\n"
-            "1. NEVER output the solution, calculations, or final answer.\n"
-            "2. NEVER start with conversational text like 'Okay', 'Here is the plan', or 'Let's analyze'.\n"
-            "3. Your output must start immediately with the tag `START` and end with `END`.\n"
-            "\n"
-            "### EXAMPLE\n"
-            "User: A car travels 100km. It takes 2 hours. Find speed.\n"
-            "Assistant:\n"
-            "START\n"
-            "1. Identify distance (d=100) and time (t=2).\n"
-            "2. Apply formula: speed = distance / time.\n"
-            "3. Calculate speed = 100 / 2.\n"
-            "END\n"
-            "\n"
-            "### YOUR TURN\n"
-            "Analyze the user's request and output the plan between START and END tags."
-        )
         self.system_prompt = (
-            "You are a reasoning assistant. You must solve the problem step by step. "
-            "I will provide you with a PLAN and ask you to execute one step at a time with **English**. "
-            "CRITICAL REQUIREMENT: "
-            "1. Strictly follow the PLAN. "
-            "2. After completing the step, you MUST output the tag '</step>' or '</think>' "
-            "3. Do not generate future steps that I have not asked for. "
-            "4. If the step is completed, wait for the next instruction."
-            "5. Put your final answer within \\boxed{}."
+            "You are a specialized Step-by-Step Reasoning Engine. "
+            "Your task is to execute a specific step in a multi-step plan based on provided context.\n"
+            "### CRITICAL RULES ###\n"
+            "1. Use the information in the Previous Context to solve the current step. Do not ignore it.\n"
+            "2. execute ONLY the 'Current Step' described below. Do NOT attempt to solve future steps.\n"
+            "3. **Language**: Output your reasoning and answer in **English**.\n"
+            "4. **Stop Sequence**: You must stop generating text immediately after finishing the current step. Do not add conversational filler like 'Ready for the next step'.\n"
+            "5. **Formatting**: \n"
+            "   - Show your reasoning clearly.\n"
+            "   - If this step produces a result, enclose it in \\boxed{{}}.\n"
+            "   - End your response with the tag '</think>' to signal completion."
         )
         
         self.eos_tokens = ["<｜end▁of▁sentence｜>", "</s>", "</refer>final<|im_message|>", "[END]", "<eos>"]
@@ -175,125 +157,53 @@ class VLLMPlanRouter(LM):
         
         return sum(probs) / len(probs) if probs else 0.0
 
-    def parse_plan(self, plan_text: str) -> List[str]:
-        """
-        START
-        1. 步骤一
-        2. 步骤二
-        END
-        """
-        steps = []
-
-        pattern = r"START\s*(.*?)\s*END"
-        match = re.search(pattern, plan_text, re.DOTALL | re.IGNORECASE)
-        
-        if not match:
-            lines = plan_text.strip().split('\n')
-            for line in lines:
-                line = line.strip()
-                if re.match(r'^\d+\.', line):
-                    step_content = re.sub(r'^\d+\.\s*', '', line)
-                    steps.append(step_content)
-            return steps if steps else ["Execute the task step by step."]
-
-        plan_content = match.group(1)
-        
-        lines = plan_content.split('\n')
-        
-        for line in lines:
-            line = line.strip()
-            if re.match(r'^\d+\.', line):
-                clean_step = re.sub(r'^\d+\.\s*', '', line)
-                steps.append(clean_step)
-
-        return steps if steps else ["Perform the necessary calculations."]
-
-    def _run_routing(self, messages: List[Dict[str, str]], stop_sequences: List[str]) -> str:
+    def _run_routing(self, messages: List[Dict[str, str]], stop_sequences: List[str], steps: List[str]) -> str:
         logger.info(f"[History Routing] 启动 | 阈值: {self.confidence_threshold}")
-        plan_messages = [
-            {"role": "system", "content": self.plan_system_prompt},
-            {"role": "user", "content": messages[0]['content']}
-        ]
-
-        prompt_text = self.tokenizer_small.apply_chat_template(plan_messages, tokenize=False, add_generation_prompt=False).rstrip()
-
-        prompt_text+="START\n"
-
-        if self.debug:
-            self.print_preview(prompt_text, 250)
-
-        plan_res = self._call_vllm_api(
-            url=self.small_url,
-            model_name=self.small_model_name,
-            prompt_text=prompt_text,
-            max_tokens=self.max_step_tokens,
-            stop_sequences=["</think>"],
-            get_logprobs=False
-        )
-        
-        plan_text = ""
-        planned_steps = []
-        if plan_res and "choices" in plan_res:
-            plan_text = plan_res["choices"][0]["text"]
-            plan_token_ids = self.tokenizer_small.encode(plan_text, add_special_tokens=False)
-            self.stats['plan_tokens'] += len(plan_token_ids)
-            planned_steps = self.parse_plan(plan_text)
-            logger.info(f"Plan parsed: {len(planned_steps)} steps")
-        else:
-            logger.warning("Plan parsing failed, using default method.")
-            planned_steps = ["Solve the problem step by step."]
-
-        print(f"全文：{plan_text}")
-        plan_text_for = ""
-        for step_idx, step_desc in enumerate(planned_steps):
-            plan_text_for +=f"{step_idx+1}.{step_desc}"
-            print(f"task {step_idx+1}: {step_desc}")
 
         conversation_history = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": messages[0]['content']},
-            {"role": "assistant", "content": plan_text_for}
         ]
+
+        current_raw_text = self.tokenizer_small.apply_chat_template(
+                conversation_history, 
+                tokenize=False, 
+                add_generation_prompt=False
+            )
 
         all_generated_segments = []
         force_large_model_this_step = False
         gen_tokens = 0
 
-        for step_idx, step_desc in enumerate(planned_steps):
+        if len(steps) == 0:
+            steps.append("Calculate.")
+        
+
+        for step_idx, step_desc in enumerate(steps):
             current_step = step_idx + 1
             use_large_model = force_large_model_this_step
-            
-            current_messages = conversation_history.copy()
-            step_instruction = (
-                f"Please complete task: {step_desc}"
-            )
-            current_messages.append({"role": "user", "content": step_instruction})
-
-
-            tokenizer = self.tokenizer_large if use_large_model else self.tokenizer_small
-            current_prompt_text = tokenizer.apply_chat_template(
-                current_messages, 
-                tokenize=False, 
-                add_generation_prompt=False
-            )
-            if self.debug:
-                self.print_preview(current_prompt_text, 200)
 
             tokenizer_used = self.tokenizer_large if use_large_model else self.tokenizer_small
             url_used = self.large_url if use_large_model else self.small_url
             model_name = self.large_model_name if use_large_model else self.small_model_name
 
-            input_len = len(tokenizer_used.encode(current_prompt_text, add_special_tokens=False))
+            task_text = f"Current Step: {steps[step_idx]}\n"
+            current_raw_text += task_text
+
+            input_len = len(tokenizer_used.encode(current_raw_text, add_special_tokens=False))
             if input_len > 30000:
                 logger.warning(f"Context too long ({input_len} tokens). Truncating history...")
                 pass 
+
+            if self.debug:
+                self.print_preview(current_raw_text,200)
             
             step_res = self._call_vllm_api(
                 url=url_used,
                 model_name=model_name,
-                prompt_text=current_prompt_text,
+                prompt_text=current_raw_text,
                 max_tokens=self.max_step_tokens,
-                stop_sequences=stop_sequences + [self.step_tag],
+                stop_sequences=stop_sequences,
                 get_logprobs=True
             )
 
@@ -327,10 +237,7 @@ class VLLMPlanRouter(LM):
 
                 conversation_history.append({"role": "assistant", "content": generated_text})
 
-                if "\\boxed{" in generated_text:
-                    logger.info("检测到最终答案或结束标记，停止生成。")
-                    break
-                elif gen_tokens>=self.max_gen_tokens:
+                if gen_tokens>=self.max_gen_tokens:
                     logger.warning(f"超出最大token限制:{self.max_gen_tokens}")
                     break
             else:
@@ -366,6 +273,10 @@ class VLLMPlanRouter(LM):
     def generate_until(self, requests: List) -> List[str]:
         results = []
         pbar = tqdm(requests, desc="Speculative Routing")
+        with open(self.step_plan, 'r', encoding='utf-8') as f:
+            plans = json.load(f)
+
+        idx = 0
 
         for req in pbar:
             if isinstance(req, Instance):
@@ -379,15 +290,13 @@ class VLLMPlanRouter(LM):
             if isinstance(stop_sequences, str):
                 stop_sequences = [stop_sequences]
             
-            if self.step_tag not in stop_sequences:
-                stop_sequences.append(self.step_tag)
-            
             clean_context = context
-            
             final_messages=[{"role": "user", "content": clean_context}]
+            steps = plans[idx]['steps']
+            idx+=1
 
             try:
-                generated_text = self._run_routing(final_messages, stop_sequences)
+                generated_text = self._run_routing(final_messages, stop_sequences, steps)
                 results.append(generated_text)
             except Exception as e:
                 logger.error(f"Error processing request: {e}")

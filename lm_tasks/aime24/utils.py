@@ -45,9 +45,10 @@ def process_results(doc: Dict, results: List[str]):
     
     extracted_answer = None
     
-    boxed_match = re.search(r"\\boxed\{([^}]+)\}", raw_pred)
-    if boxed_match:
-        extracted_answer = boxed_match.group(1).strip()
+    all_boxed_matches = re.findall(r"\\boxed\{([^}]+)\}", raw_pred)
+    
+    if all_boxed_matches:
+        extracted_answer = all_boxed_matches[-1].strip()
 
     else:
         answer_patterns = [
