@@ -202,7 +202,9 @@ class VLLMPlanRouter(LM):
             
             if input_len > 28000: 
                 logger.warning(f"Context too long ({input_len} tokens). Truncating...")
-                break
+                system_tokens = tokenizer_used.encode(system_content + "\n\n", add_special_tokens=False)
+                prompt_tokens = system_tokens + prompt_tokens[-2048:]
+                current_prompt = tokenizer_used.decode(prompt_tokens, skip_special_tokens=True)
 
             step_res = self._call_vllm_api(
                 url=url_used,
