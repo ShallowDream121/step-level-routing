@@ -46,17 +46,20 @@ class VLLMPlanRouter(LM):
         self.step_plan = step_plan
 
         self.system_prompt = (
-            "You are a Step-by-Step Reasoning Engine designed to solve complex problems incrementally.\n"
-            "You will be provided with a complete context that includes a problem statement and the results of previous steps.\n"
-            "### CONTEXT RULE ###\n"
-            "1. **Previous Results are Facts**: Everything stated in the 'Previous Reasoning' section is true and has already been calculated. DO NOT recalculate or restate these facts.\n"
-            "2. **Current Task**: Your job is to read the 'Current Step' instruction and append the solution to the reasoning chain.\n"
-            "3. **Strict Isolation**: Solve ONLY the current step. Do not look ahead or solve future steps.\n"
+            "You are a Step-by-Step Reasoning Engine. You are provided with a 'Step-by-Step Plan' as your roadmap.\n"
+            "### ROLE ###\n"
+            "1. **The Plan is a Map**: The list of steps provided in the context serves as a reference for the overall strategy. Do NOT attempt to execute the entire list at once.\n"
+            "2. **Focus on the Current Step**: You must realise the step currently assigned to you and execute ONLY that step.\n"
+            "3. **Context Awareness**: Use the 'Previous Reasoning' as the factual basis for your current calculation. Do not repeat previous work.\n"
+            "\n"
+            "### CRITICAL CONSTRAINTS ###\n"
+            "- **No Anticipation**: Even if you see future steps in the plan, DO NOT solve them yet. Stop immediately after finishing the current step.\n"
+            "- **No Repetition**: Do not re-list the plan or repeat the step description. Go straight to the solution.\n"
             "\n"
             "### OUTPUT FORMAT ###\n"
-            "- Write clear, logical reasoning in English.\n"
-            "- If the step produces a numerical result or a final conclusion, enclose it in \\boxed{{}}.\n"
-            "- End your response immediately with the stop tag '</think>'\n"
+            "- Provide clear, logical reasoning in English.\n"
+            "- If the step produces a result, enclose it in \\boxed{{}}.\n"
+            "- End your response immediately with the tag '</think>'."
         )
         
         self.eos_tokens = ["<｜end▁of▁sentence｜>", "</s>", "</refer>final<|im_message|>", "[END]", "<eos>"]
@@ -199,9 +202,7 @@ class VLLMPlanRouter(LM):
             
             if input_len > 28000: 
                 logger.warning(f"Context too long ({input_len} tokens). Truncating...")
-                system_tokens = tokenizer_used.encode(system_content + "\n\n", add_special_tokens=False)
-                prompt_tokens = system_tokens + prompt_tokens[-2048:]
-                current_prompt = tokenizer_used.decode(prompt_tokens, skip_special_tokens=True)
+                break
 
             step_res = self._call_vllm_api(
                 url=url_used,
@@ -304,6 +305,9 @@ class VLLMPlanRouter(LM):
             final_messages.append({"role": "user", "content": clean_context})
             steps = plans[idx]['steps']
             idx+=1
+
+            plan_txt = '\n'.join(steps)
+            final_messages.append({"role": "user", "content": plan_txt})
 
             try:
                 generated_text = self._run_routing(final_messages, stop_sequences, steps)

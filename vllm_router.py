@@ -49,7 +49,7 @@ class VLLMRouter(LM):
 
         self.max_steps = int(max_gen_tokens) // int(max_step_tokens) + 1
 
-        self.log_file_path = "./confidence/confidence_log_blocks_gpqa.csv"
+        self.log_file_path = "./confidence/confidence_log_blocks_1024_aime.csv"
 
         self.eos_tokens = [
             "<｜end▁of▁sentence｜>",

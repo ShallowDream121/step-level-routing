@@ -20,9 +20,9 @@ LARGE_PORT=8002
 
 TASKS="aime24_nofigures"
 PLAN="./plans/aime_2024_plans.json"
-OUTPUT_PATH="./log_traces/1.5B-7B-plan-aime/"
+OUTPUT_PATH="./log_traces/1.5B-7B-plan-aime/v3/"
 
-CONFIDENCE_THRESHOLD=0.55
+CONFIDENCE_THRESHOLD=0.6
 MAX_STEP_TOKENS=4096
 MAX_GEN_TOKENS=16384
 LIMIT=""  
