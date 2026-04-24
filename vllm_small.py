@@ -181,14 +181,18 @@ class VLLMSMAILL(LM):
 
         pbar.close()
         
-        total = self.stats["total_requests"]
+        total = stats["total_requests"]
+
         if total > 0:
-            print("\n" + "="*40)
-            print("Routing Statistics:")
-            print(f"   Total Requests: {total}")
-            s_tok = self.stats['tokens_generated']
-            print(f"   Tokens generated (Small): {s_tok}")
-            print("="*40)
+            with open("./log_traces/logs/routing_small.log", "a", encoding="utf-8") as f:
+                f.write("\n" + "="*40 + "\n")
+                f.write("Routing Statistics:\n")
+                f.write(f"   Total Requests: {total}\n")
+
+                s_tok = stats['tokens_generated']
+                f.write(f"   Tokens generated (Small): {s_tok}\n")
+                
+                f.write("="*40 + "\n")
             
         return results
 

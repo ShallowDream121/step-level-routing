@@ -47,7 +47,7 @@ class VLLMSteer(LM):
         self.max_step_tokens = max_step_tokens
         self.max_gen_tokens = int(max_gen_tokens)
 
-        self.log_file_path = "./confidence/confidence_log_gpqa.csv"
+        self.log_file_path = "./confidence/confidence_log_steer_aime24.csv"
 
         print(f"Loading Small Model Tokenizer: {small_model_name}...")
         self.tokenizer_small = AutoTokenizer.from_pretrained(small_model_name, trust_remote_code=True)
@@ -176,7 +176,7 @@ class VLLMSteer(LM):
 
             input_ids = tokenizer_used.encode(current_raw_text, add_special_tokens=False)
             
-            if len(input_ids) > 32000:
+            if len(input_ids) > 30000:
                 logger.warning(f"上下文过长 ({len(input_ids)})，截断尾部...")
                 input_ids = input_ids[-30000:] 
             if use_large_model:
@@ -227,6 +227,9 @@ class VLLMSteer(LM):
 
                 if not use_large_model and confidence < self.confidence_threshold:
                     logger.info(f"Step {current_step} Confidence Low ({confidence:.3f}), switch to Large next")
+                    force_large_model_this_step = True
+                elif use_large_model and confidence < self.confidence_threshold:
+                    logger.info(f"Step {current_step} Confidence Low ({confidence:.3f}), continue Large next")
                     force_large_model_this_step = True
                 else:
                     logger.info(f"Step {current_step} Confidence OK ({confidence:.3f})")
@@ -307,18 +310,24 @@ class VLLMSteer(LM):
 
         pbar.close()
         
-        total = self.stats["total_requests"]
-        if total > 0:
-            print("\n" + "="*40)
-            print("Routing Statistics:")
-            print(f"   Total Requests: {total}")
-            print(f"   Fallbacks: {self.stats['fallback_to_large']}")
-            s_tok = self.stats['tokens_generated_by_small']
-            l_tok = self.stats['tokens_generated_by_large']
-            print(f"   Tokens (Small/Large): {s_tok} / {l_tok}")
-            if s_tok + l_tok > 0:
-                print(f"   Small Ratio: {s_tok/(s_tok+l_tok):.2%}")
-            print("="*40)
+        with open("./log_traces/logs/routing_steer.log", "a", encoding="utf-8") as f:
+            total = self.stats["total_requests"]
+            if total > 0:
+                f.write("\n" + "="*40 + "\n")
+                f.write("Routing Statistics:\n")
+                f.write(f"   Total Requests: {total}\n")
+                f.write(f"   Fallbacks: {self.stats['fallback_to_large']}\n")
+                
+                s_tok = self.stats['tokens_generated_by_small']
+                l_tok = self.stats['tokens_generated_by_large']
+                
+                f.write(f"   Tokens (Small/Large): {s_tok} / {l_tok}\n")
+                
+                if s_tok + l_tok > 0:
+                    ratio = s_tok/(s_tok+l_tok)
+                    f.write(f"   Small Ratio: {ratio:.2%}\n")
+                    
+                f.write("="*40 + "\n")
             
         return results
 

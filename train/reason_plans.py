@@ -7,7 +7,9 @@ from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 from tqdm import tqdm
+import dashscope
 
+dashscope.api_key = "sk-74e6c42f8639444eacb98a241bdd09e9"
 
 SYSTEM_PROMPT_aime = """
 You are an expert Task Decomposition Engine specialized in training small AI models (1.5B parameters). Your goal is to break down problems into a sequence of extremely simple, atomic, and executable steps.
@@ -113,8 +115,8 @@ class AIMEInference:
     def run(self):
         print("正在加载数据集...")
         try:
-            full_dataset = load_dataset("Idavidrein/gpqa", "gpqa_diamond", split="train")
-            dataset = full_dataset.select(range(80))
+            full_dataset = load_dataset("simplescaling/aime24_nofigures", None, split="train")
+            dataset = full_dataset
         except Exception as e:
             print(f"数据集加载失败: {e}")
             return
@@ -125,14 +127,14 @@ class AIMEInference:
         for item in tqdm(dataset):
             problem_id = item.get('id', 'unknown')
             
-            prompt = self.format_prompt(2, item)
+            prompt = self.format_prompt(1, item)
             raw_response = self.generate(prompt)
             
             parsed_steps = self.parse_steps(raw_response)
             
             result_item = {
                 "id": problem_id,
-                "problem": item.get("Question"),
+                "problem": item.get("problem"),
                 "raw_response": raw_response,   
                 "steps": parsed_steps   
             }
@@ -144,9 +146,9 @@ class AIMEInference:
         print(f"处理完成！结果已保存至 {self.output_file}")
 
 if __name__ == "__main__":
-    BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
-    LORA_PATH = "./saves/qwen2.5-1.5b-math-lora2/" 
-    OUTPUT_FILE = "../plans/gpqa_plans.json"
+    BASE_MODEL = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+    LORA_PATH = "./saves/deepseek-qwen-distill-7b-gsm8k-lora-v3/" 
+    OUTPUT_FILE = "../plans/aime_plans_deepseek_7B.json"
     
     if os.path.exists(LORA_PATH):
         runner = AIMEInference(BASE_MODEL, LORA_PATH, OUTPUT_FILE)

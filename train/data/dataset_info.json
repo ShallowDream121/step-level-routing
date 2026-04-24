@@ -11,18 +11,5 @@
       "role_tag": "role",
       "content_tag": "content"
     }
-  },
-  "math_steps": {
-    "file_name": "train_data_math_new.json",
-    "formatting": "alpaca",
-    "columns": {
-      "prompt": "instruction",
-      "query": "input",
-      "response": "output"
-    },
-    "tags": {
-      "role_tag": "role",
-      "content_tag": "content"
-    }
   }
 }

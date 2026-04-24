@@ -197,17 +197,25 @@ class VLLMRANDOM(LM):
 
         pbar.close()
         
-        total = self.stats["total_requests"]
-        if total > 0:
-            print("\n" + "="*40)
-            print("Routing Statistics:")
-            print(f"   Total Requests: {total}")
-            s_tok = self.stats['tokens_generated_by_small']
-            l_tok = self.stats['tokens_generated_by_large']
-            print(f"   Tokens (Small/Large): {s_tok} / {l_tok}")
-            if s_tok + l_tok > 0:
-                print(f"   Small Ratio: {s_tok/(s_tok+l_tok):.2%}")
-            print("="*40)
+        with open("./log_traces/logs/routing_random.log", "a", encoding="utf-8") as f:
+            total = self.stats["total_requests"]
+            if total > 0:
+                f.write("\n" + "="*40 + "\n")
+                f.write("Routing Statistics:\n")
+                f.write(f"   Total Requests: {total}\n")
+                f.write(f"   Fallbacks: {self.stats['fallback_to_large']}\n")
+                f.write(f"   Tokens for Plan: {self.stats['plan_tokens']}\n")
+                
+                s_tok = self.stats['tokens_generated_by_small']
+                l_tok = self.stats['tokens_generated_by_large']
+                
+                f.write(f"   Tokens (Small/Large): {s_tok} / {l_tok}\n")
+                
+                if s_tok + l_tok > 0:
+                    ratio = s_tok/(s_tok+l_tok)
+                    f.write(f"   Small Ratio: {ratio:.2%}\n")
+                    
+                f.write("="*40 + "\n")
             
         return results
 
