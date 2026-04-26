@@ -47,7 +47,7 @@ class VLLMSteer(LM):
         self.max_step_tokens = max_step_tokens
         self.max_gen_tokens = int(max_gen_tokens)
 
-        self.log_file_path = "./confidence/confidence_log_steer_aime24.csv"
+        self.log_file_path = "./confidence/confidence_log_steer_gpqa.csv"
 
         print(f"Loading Small Model Tokenizer: {small_model_name}...")
         self.tokenizer_small = AutoTokenizer.from_pretrained(small_model_name, trust_remote_code=True)
@@ -211,9 +211,9 @@ class VLLMSteer(LM):
                     "ids": new_token_ids,
                     "source": source
                 })
-                #with open(self.log_file_path, mode='a', newline='', encoding='utf-8') as csvfile:
-                #    writer = csv.writer(csvfile)
-                #    writer.writerow([current_step, f"{confidence:.5f}", source, len(new_token_ids)])
+                with open(self.log_file_path, mode='a', newline='', encoding='utf-8') as csvfile:
+                    writer = csv.writer(csvfile)
+                    writer.writerow([current_step, f"{confidence:.5f}", source, len(new_token_ids)])
 
                 if use_large_model:
                     self.stats["tokens_generated_by_large"] += len(new_token_ids)

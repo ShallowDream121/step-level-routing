@@ -46,20 +46,29 @@ class VLLMPlanRouter(LM):
         self.step_plan = step_plan
 
         self.system_prompt = (
-            "You are a Step-by-Step Reasoning Engine. You are provided with a 'Step-by-Step Plan' as your roadmap.\n"
-            "### ROLE ###\n"
-            "1. **The Plan is a Map**: The list of steps provided in the context serves as a reference for the overall strategy. Do NOT attempt to execute the entire list at once.\n"
-            "2. **Focus on the Current Step**: You must realise the step currently assigned to you and execute ONLY that step.\n"
-            "3. **Context Awareness**: Use the 'Previous Reasoning' as the factual basis for your current calculation. Do not repeat previous work.\n"
+            "You are a Step-by-Step Reasoning Engine. You must follow the exact instructions given for each step.\n"
+            "### CRITICAL RULES ###\n"
+            "1. **Execute ONLY the current step** - nothing more, nothing less\n"
+            "2. **Do not explain the plan or list other steps**\n"
+            "3. **Do not add summaries, conclusions, or additional commentary**\n"
+            "4. **Do not introduce variables not mentioned in the step**\n"
+            "5. **Stop immediately after completing the specific task in the current step**\n"
+            "6. **If a step asks to identify/set up/calculate something, do exactly that**\n"
+            "7. **Use only mathematical notation and direct responses**\n"
+            "8. **End each response with '</think>' tag only**\n"
             "\n"
-            "### CRITICAL CONSTRAINTS ###\n"
-            "- **No Anticipation**: Even if you see future steps in the plan, DO NOT solve them yet. Stop immediately after finishing the current step.\n"
-            "- **No Repetition**: Do not re-list the plan or repeat the step description. Go straight to the solution.\n"
+            "### EXAMPLE CORRECT BEHAVIOR ###\n"
+            "Step: 'Identify the distance of the walk: 9'\n"
+            "Correct Response: 'Distance = 9 km</think>'\n"
+            "\n"
+            "Step: 'Calculate 2 + 2'\n"
+            "Correct Response: '2 + 2 = 4</think>'\n"
             "\n"
             "### OUTPUT FORMAT ###\n"
-            "- Provide clear, logical reasoning in English.\n"
-            "- If the step produces a result, enclose it in \\boxed{{}}.\n"
-            "- End your response immediately with the tag '</think>'."
+            "- Provide only the result of the specific step\n"
+            "- If the step produces a formula or value, state it directly\n"
+            "- If the final step produces a result, enclose it in \\boxed{{}}\n"
+            "- End every response with '</think>'"
         )
         
         self.eos_tokens = ["<｜end▁of▁sentence｜>", "</s>", "</refer>final<|im_message|>", "[END]", "<eos>"]
@@ -192,16 +201,18 @@ class VLLMPlanRouter(LM):
             if generated_context != "":
                 current_messages.append({"role":"assistant", "content":generated_context})
 
-            newsys_prompt = "You must realise the step currently assigned to you and execute ONLY that step.\n"
-            if step_idx == len(steps)-1 and len(steps)>1:
-                newsys_prompt += "this step produces the final result, enclose it in \\boxed{{}}\n"
+            current_step_instruction = f"""
+                CURRENT STEP TO EXECUTE: {step_desc}
+                INSTRUCTIONS:
+                - Execute ONLY this specific step
+                - Do not mention other steps or the overall plan
+                - Do not provide explanations unless absolutely necessary for the calculation
+                - Provide the direct result of this step
+                - Stop immediately after completing this step
+                - End your response with '</think>' only
+                """
 
-            newsys_prompt += "CURRENT STEP:"
-            newsys_prompt += step_desc + "\n"
-
-            newsys_prompt += "Please finish the step.\n"
-
-            current_messages.append({"role":"user","content":newsys_prompt})
+            current_messages.append({"role":"user", "content": current_step_instruction})
 
             current_prompt = self.tokenizer_large.apply_chat_template(
                 current_messages, 
@@ -219,8 +230,7 @@ class VLLMPlanRouter(LM):
             
             if input_len > 28000: 
                 logger.warning(f"Context too long ({input_len} tokens). Truncating...")
-                system_tokens = tokenizer_used.encode(system_content + "\n\n", add_special_tokens=False)
-                prompt_tokens = system_tokens + prompt_tokens[-2048:]
+                prompt_tokens = prompt_tokens[-4096:]
                 current_prompt = tokenizer_used.decode(prompt_tokens, skip_special_tokens=True)
 
             step_res = self._call_vllm_api(
@@ -258,7 +268,7 @@ class VLLMPlanRouter(LM):
                 full_context_str +=": \n"
                 full_context_str += generated_text + "\n\n"
 
-                generated_context += generated_text
+                generated_context += self._clean_response(generated_text)
 
                 self.print_preview(generated_text,300)
 
@@ -306,6 +316,36 @@ class VLLMPlanRouter(LM):
                 text = self.tokenizer_large.decode(ids, skip_special_tokens=False)
             final_text_parts.append(text)
         return "".join(final_text_parts)
+    
+    def _clean_response(self, text: str) -> str:
+        if not text:
+            return ""
+
+        lines = text.split('\n')
+        cleaned_lines = []
+        
+        for line in lines:
+            if not any(keyword in line.lower() for keyword in [
+                'moving on to', 'i realize', 'first off', 'so,', 'therefore',
+                'in summary', 'to find out', 'given that', 'since', 'thus'
+            ]):
+                cleaned_lines.append(line)
+        
+        result = '\n'.join(cleaned_lines)
+
+        import re
+        math_patterns = [
+            r'\\boxed\{[^}]*\}',  
+            r'[A-Za-z\s]*=\s*[0-9.+\-*/()]+\s*', 
+            r'[0-9.+\-*/()]+\s*[=<>]\s*[0-9.+\-*/()]+', 
+        ]
+        
+        for pattern in math_patterns:
+            matches = re.findall(pattern, result)
+            if matches:
+                return matches[-1].strip()
+        
+        return result.strip()
 
     def generate_until(self, requests: List) -> List[str]:
         results = []
@@ -332,9 +372,6 @@ class VLLMPlanRouter(LM):
             final_messages.append({"role": "user", "content": clean_context})
             steps = plans[idx]['steps']
             idx+=1
-
-            plan_txt = '\n'.join(steps)
-            final_messages.append({"role": "assistant", "content": plan_txt})
 
             try:
                 generated_text = self._run_routing(final_messages, stop_sequences, steps)
