@@ -19,13 +19,13 @@ SMALL_PORT=8001
 LARGE_PORT=8002
 
 TASKS="aime24_nofigures"
-PLAN="./plans/aime_plans_qwen_max.json"
-OUTPUT_PATH="./log_traces/1.5B-7B-plan-aime/v5-api-plan/"
+PLAN="./plans/aime_plans_deepseek_7B.json"
+OUTPUT_PATH="./log_traces/1.5B-7B-plan-aime24/test/"
 
-CONFIDENCE_THRESHOLD=0.6
-MAX_STEP_TOKENS=4096
+CONFIDENCE_THRESHOLD=0.57
+MAX_STEP_TOKENS=16384
 MAX_GEN_TOKENS=16384
-LIMIT=""  
+LIMIT="--limit 1"  
 NUM_FEWSHOT=0
 BATCH_SIZE="auto"
 

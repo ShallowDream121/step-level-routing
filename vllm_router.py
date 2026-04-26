@@ -47,7 +47,7 @@ class VLLMRouter(LM):
         self.max_step_tokens = max_step_tokens
         self.max_gen_tokens = max_gen_tokens
 
-        self.max_steps = int(max_gen_tokens) // int(max_step_tokens) + 1
+        self.max_steps = int(max_gen_tokens) // int(max_step_tokens) + 10
 
         self.log_file_path = "./confidence/confidence_log_blocks_1024_aime.csv"
 
@@ -223,6 +223,8 @@ class VLLMRouter(LM):
             model_name = self.large_model_name if use_large_model else self.small_model_name
 
             input_ids = tokenizer_used.encode(current_raw_text, add_special_tokens=False)
+
+            gen_tokens = 0
             
             if len(input_ids) > 32000:
                 logger.warning(f"上下文过长 ({len(input_ids)})，截断尾部...")
@@ -323,6 +325,8 @@ class VLLMRouter(LM):
                     self.stats["tokens_generated_by_large"] += len(new_token_ids)
                 else:
                     self.stats["tokens_generated_by_small"] += len(new_token_ids)
+                
+                gen_tokens += len(new_token_ids)
 
                 decoded_segment = tokenizer_used.decode(new_token_ids, skip_special_tokens=True)
                 
@@ -340,8 +344,9 @@ class VLLMRouter(LM):
                     logger.info("   检测到最终答案 (\\boxed)，任务完成。")
                     break
                 
-                if finish_reason == "length":
-                    logger.info("   达到单步最大长度，自动继续下一步。")
+                if gen_tokens > int(self.max_gen_tokens):
+                    logger.info("达到最大tokens生成上限，停止推理。")
+                    break
 
                 #with open(self.log_file_path, mode='a', newline='', encoding='utf-8') as csvfile:
                 #    writer = csv.writer(csvfile)

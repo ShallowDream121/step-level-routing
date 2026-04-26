@@ -3,7 +3,7 @@ import re
 from typing import Dict, List, Union
 from decimal import Decimal, InvalidOperation
 
-if os.getenv("SMALL_ONLY", "0") == "1" or os.getenv("LARGE_ONLY", "0") == "1":
+if os.getenv("USE_TEMPLATE", "0") == "1" :
     QUERY_TEMPLATE = 'You are a reasoning assistant. You must solve the problem step by step. CRITICAL REQUIREMENT:  '\
     '1.You must use English.' \
     '2.Do not output the final answer until you have gone through all necessary steps.'\

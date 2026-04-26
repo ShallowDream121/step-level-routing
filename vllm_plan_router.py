@@ -170,6 +170,8 @@ class VLLMPlanRouter(LM):
                 add_generation_prompt=False
             )
         full_context_str += system_content + "\n\n"
+
+        generated_context = ""
         
         all_generated_segments = []
         force_large_model_this_step = False
@@ -186,11 +188,26 @@ class VLLMPlanRouter(LM):
             model_name = self.large_model_name if use_large_model else self.small_model_name
 
             current_prompt = full_context_str 
+            current_messages = messages.copy()
+            if generated_context != "":
+                current_messages.append({"role":"assistant", "content":generated_context})
 
-            current_prompt += "### CURRENT TASK"
-            current_prompt += step_desc + "\n\n"
+            newsys_prompt = "You must realise the step currently assigned to you and execute ONLY that step.\n"
+            if step_idx == len(steps)-1 and len(steps)>1:
+                newsys_prompt += "this step produces the final result, enclose it in \\boxed{{}}\n"
 
-            current_prompt += "YOUR RESPONSE:\n"
+            newsys_prompt += "CURRENT STEP:"
+            newsys_prompt += step_desc + "\n"
+
+            newsys_prompt += "Please finish the step.\n"
+
+            current_messages.append({"role":"user","content":newsys_prompt})
+
+            current_prompt = self.tokenizer_large.apply_chat_template(
+                current_messages, 
+                tokenize=False, 
+                add_generation_prompt=False
+            )
 
             try:
                 prompt_tokens = tokenizer_used.encode(current_prompt, add_special_tokens=False)
@@ -240,6 +257,10 @@ class VLLMPlanRouter(LM):
                 full_context_str += step_desc
                 full_context_str +=": \n"
                 full_context_str += generated_text + "\n\n"
+
+                generated_context += generated_text
+
+                self.print_preview(generated_text,300)
 
                 if not use_large_model and confidence < self.confidence_threshold:
                     logger.info(f"Step {current_step} Confidence Low ({confidence:.3f}), forcing Large model NEXT")
@@ -313,7 +334,7 @@ class VLLMPlanRouter(LM):
             idx+=1
 
             plan_txt = '\n'.join(steps)
-            final_messages.append({"role": "user", "content": plan_txt})
+            final_messages.append({"role": "assistant", "content": plan_txt})
 
             try:
                 generated_text = self._run_routing(final_messages, stop_sequences, steps)
