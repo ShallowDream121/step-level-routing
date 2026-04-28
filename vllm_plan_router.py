@@ -46,19 +46,15 @@ class VLLMPlanRouter(LM):
         self.step_plan = step_plan
 
         self.system_prompt = (
-            "You are a strict step executor. You receive EXACTLY ONE action per turn. "
-            "Your entire response must contain ONLY that action's result.\n"
-            "\n"
-            "###RULES (violation will cause failure)\n"
-            "1. **SINGLE STEP ONLY**: Execute the CURRENT step and NOTHING else. "
-            "Never plan, guess, or output future steps.\n"
-            "2. **NO EXTRA CONTENT**: No explanations, no reasoning, no markdown, no commentary, "
-            "no thinking ahead. Not even a single word before or after the required output.\n"
-            "3. **FINAL ANSWER**: Only use \\boxed{{}} when the CURRENT action explicitly demands a final answer. "
-            "Otherwise, never output a boxed answer.\n"
-            "4. **STOP MARKER**: End EXACTLY with '</think>' (no spaces, no newlines). "
-            "The last 7 characters of your reply MUST be '</think>'. "
-            "Any text after '</think>' will be treated as a violation."
+            "You are a SINGLE-STEP EXECUTOR. Each call you receive exactly ONE step to execute.\n"
+            "The problem shown in BACKGROUND is context-only — you MUST NOT solve it directly.\n\n"
+            "CRITICAL RULES:\n"
+            "- Execute ONLY the step marked as [YOUR TASK]. Never touch other steps.\n"
+            "- Never output future steps, plans, or reasoning about unsolved parts.\n"
+            "- Never re-analyze the original problem from scratch.\n"
+            "- Output ONLY the result of the current step. No explanations, no commentary.\n"
+            "- End every response with '</think>' (last 7 chars).\n"
+            "- Only use \\boxed{{}} when the current step explicitly demands a final answer."
         )
 
         logger.info(f"Loading Small Model Tokenizer: {small_model_name}...")
@@ -184,31 +180,42 @@ class VLLMPlanRouter(LM):
 
             #current_prompt = full_context_str 
 
-            current_step_instruction = (
-                f"###STEP TO EXECUTE\n{step_desc}\n\n"
-                "Do the described step and nothing else. Never attempt to solve the whole problem or plan future steps.\n"
+            # Extract original problem from messages (for BACKGROUND section)
+            original_problem = ""
+            for msg in messages:
+                if msg.get("role") == "user":
+                    original_problem = msg["content"]
+                    break
+
+            total_steps = len(steps)
+
+            # Build a SINGLE user message with clear sections
+            step_user_msg = (
+                f"## BACKGROUND (context only — do NOT solve)\n"
+                f"{original_problem}\n\n"
+                f"## YOUR TASK: Step {current_step}/{total_steps}\n"
+                f"{step_desc}\n"
             )
-
-            #current_prompt += current_step_instruction
-
-            current_messages = messages.copy()
-            previous_context = ""
             if full_context_str:
-                previous_context = (
-                    "The following is the output of previous steps (DO NOT regenerate or continue them):\n"
+                step_user_msg += (
+                    f"\n## PREVIOUS RESULTS (reference only — do NOT regenerate)\n"
                     f"{full_context_str}\n"
                 )
-
-            current_step_prompt = (
-                f"{previous_context}"
-                f"###Now execute this single step:\n{current_step_instruction}"
+            step_user_msg += (
+                f"\n## INSTRUCTION\n"
+                f"Execute ONLY Step {current_step} above. "
+                f"Output the result directly. End with '</think>'."
             )
 
-            current_messages.append({"role": "user", "content": current_step_prompt})
+            # Use a clean message list: system + one user message
+            step_messages = [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": step_user_msg}
+            ]
 
             current_prompt = tokenizer_used.apply_chat_template(
-                current_messages, 
-                tokenize=False, 
+                step_messages,
+                tokenize=False,
                 add_generation_prompt=True
             )
 
@@ -225,12 +232,18 @@ class VLLMPlanRouter(LM):
                 prompt_tokens = prompt_tokens[-4096:]
                 current_prompt = tokenizer_used.decode(prompt_tokens, skip_special_tokens=True)
 
+            # Merge user stop sequences with anti-runaway patterns
+            merged_stops = list(stop_sequences) if stop_sequences else []
+            for s in ["\n###", "\nStep ", "Now I will", "Let me also"]:
+                if s not in merged_stops:
+                    merged_stops.append(s)
+
             step_res = self._call_vllm_api(
                 url=url_used,
                 model_name=model_name,
                 prompt_text=current_prompt,
                 max_tokens=self.max_step_tokens,
-                stop_sequences=stop_sequences,
+                stop_sequences=merged_stops,
                 get_logprobs=True,
                 temperature=0.7
             )
