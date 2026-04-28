@@ -5,27 +5,27 @@ if [ -f .env ]; then
     export $(grep -v '^#' .env | xargs)
 fi
 
-export USE_TEMPLATE=1
+#export USE_TEMPLATE=1
 export VLLM_WORKER_MULTIPROC_METHOD='spawn'
 
 BIG_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Qwen-7B"
 SMALL_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Qwen-1.5B"
 
-MODE="steer" 
+MODE="mix" 
 BIG_GPU="0"
 SMALL_GPU="1"
 
 SMALL_PORT=8001
 LARGE_PORT=8002
 
-TASKS="gpqa_diamond_mine"
+TASKS="aime24_nofigures"
 PLAN="./plans/aime_plans_deepseek_7B.json"
-OUTPUT_PATH="./log_traces/1.5B-7B-steer-gpqa/test/"
+OUTPUT_PATH="./log_traces/1.5B-7B-plan-aime24/7B-plan/"
 
-CONFIDENCE_THRESHOLD=0
-MAX_STEP_TOKENS=16384
+CONFIDENCE_THRESHOLD=0.74
+MAX_STEP_TOKENS=4096
 MAX_GEN_TOKENS=16384
-LIMIT="--limit 80"  
+LIMIT=""  
 NUM_FEWSHOT=0
 BATCH_SIZE="auto"
 

@@ -217,6 +217,7 @@ class VLLMSteer(LM):
 
                 if use_large_model:
                     self.stats["tokens_generated_by_large"] += len(new_token_ids)
+                    self.stats["fallback_to_large"] += 1
                 else:
                     self.stats["tokens_generated_by_small"] += len(new_token_ids)
 

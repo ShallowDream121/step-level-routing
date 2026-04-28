@@ -46,32 +46,20 @@ class VLLMPlanRouter(LM):
         self.step_plan = step_plan
 
         self.system_prompt = (
-            "You are a Step-by-Step Reasoning Engine. You must follow the exact instructions given for each step.\n"
-            "### CRITICAL RULES ###\n"
-            "1. **Execute ONLY the current step** - nothing more, nothing less\n"
-            "2. **Do not explain the plan or list other steps**\n"
-            "3. **Do not add summaries, conclusions, or additional commentary**\n"
-            "4. **Do not introduce variables not mentioned in the step**\n"
-            "5. **Stop immediately after completing the specific task in the current step**\n"
-            "6. **If a step asks to identify/set up/calculate something, do exactly that**\n"
-            "7. **Use only mathematical notation and direct responses**\n"
-            "8. **End each response with '</think>' tag only**\n"
+            "You are a strict step executor. You receive EXACTLY ONE action per turn. "
+            "Your entire response must contain ONLY that action's result.\n"
             "\n"
-            "### EXAMPLE CORRECT BEHAVIOR ###\n"
-            "Step: 'Identify the distance of the walk: 9'\n"
-            "Correct Response: 'Distance = 9 km</think>'\n"
-            "\n"
-            "Step: 'Calculate 2 + 2'\n"
-            "Correct Response: '2 + 2 = 4</think>'\n"
-            "\n"
-            "### OUTPUT FORMAT ###\n"
-            "- Provide only the result of the specific step\n"
-            "- If the step produces a formula or value, state it directly\n"
-            "- If the final step produces a result, enclose it in \\boxed{{}}\n"
-            "- End every response with '</think>'"
+            "###RULES (violation will cause failure)\n"
+            "1. **SINGLE STEP ONLY**: Execute the CURRENT step and NOTHING else. "
+            "Never plan, guess, or output future steps.\n"
+            "2. **NO EXTRA CONTENT**: No explanations, no reasoning, no markdown, no commentary, "
+            "no thinking ahead. Not even a single word before or after the required output.\n"
+            "3. **FINAL ANSWER**: Only use \\boxed{{}} when the CURRENT action explicitly demands a final answer. "
+            "Otherwise, never output a boxed answer.\n"
+            "4. **STOP MARKER**: End EXACTLY with '</think>' (no spaces, no newlines). "
+            "The last 7 characters of your reply MUST be '</think>'. "
+            "Any text after '</think>' will be treated as a violation."
         )
-        
-        self.eos_tokens = ["<｜end▁of▁sentence｜>", "</s>", "</refer>final<|im_message|>", "[END]", "<eos>"]
 
         logger.info(f"Loading Small Model Tokenizer: {small_model_name}...")
         self.tokenizer_small = AutoTokenizer.from_pretrained(small_model_name, trust_remote_code=True)
@@ -89,7 +77,6 @@ class VLLMPlanRouter(LM):
         self.stats = {
             "total_requests": 0,
             "fallback_to_large": 0,
-            "plan_tokens": 0,
             "tokens_generated_by_small": 0,
             "tokens_generated_by_large": 0,
         }
@@ -178,46 +165,51 @@ class VLLMPlanRouter(LM):
                 tokenize=False, 
                 add_generation_prompt=False
             )
-        full_context_str += system_content + "\n\n"
-
-        generated_context = ""
+        #full_context_str += system_content + "\n\n"
         
         all_generated_segments = []
         force_large_model_this_step = False
         gen_tokens = 0
 
         if len(steps) == 0:
-            steps.append("Calculate.")
+            steps.append("Solve the problem.")
 
         for step_idx, step_desc in enumerate(steps):
             current_step = step_idx + 1
+
             use_large_model = force_large_model_this_step
             tokenizer_used = self.tokenizer_large if use_large_model else self.tokenizer_small
             url_used = self.large_url if use_large_model else self.small_url
             model_name = self.large_model_name if use_large_model else self.small_model_name
 
-            current_prompt = full_context_str 
+            #current_prompt = full_context_str 
+
+            current_step_instruction = (
+                f"###STEP TO EXECUTE\n{step_desc}\n\n"
+                "Do the described step and nothing else. Never attempt to solve the whole problem or plan future steps.\n"
+            )
+
+            #current_prompt += current_step_instruction
+
             current_messages = messages.copy()
-            if generated_context != "":
-                current_messages.append({"role":"assistant", "content":generated_context})
+            previous_context = ""
+            if full_context_str:
+                previous_context = (
+                    "The following is the output of previous steps (DO NOT regenerate or continue them):\n"
+                    f"{full_context_str}\n"
+                )
 
-            current_step_instruction = f"""
-                CURRENT STEP TO EXECUTE: {step_desc}
-                INSTRUCTIONS:
-                - Execute ONLY this specific step
-                - Do not mention other steps or the overall plan
-                - Do not provide explanations unless absolutely necessary for the calculation
-                - Provide the direct result of this step
-                - Stop immediately after completing this step
-                - End your response with '</think>' only
-                """
+            current_step_prompt = (
+                f"{previous_context}"
+                f"###Now execute this single step:\n{current_step_instruction}"
+            )
 
-            current_messages.append({"role":"user", "content": current_step_instruction})
+            current_messages.append({"role": "user", "content": current_step_prompt})
 
-            current_prompt = self.tokenizer_large.apply_chat_template(
+            current_prompt = tokenizer_used.apply_chat_template(
                 current_messages, 
                 tokenize=False, 
-                add_generation_prompt=False
+                add_generation_prompt=True
             )
 
             try:
@@ -264,11 +256,8 @@ class VLLMPlanRouter(LM):
                 
                 gen_tokens += len(new_token_ids)
 
-                full_context_str += step_desc
-                full_context_str +=": \n"
-                full_context_str += generated_text + "\n\n"
-
-                generated_context += self._clean_response(generated_text)
+                full_context_str += f'step{step_idx}: '
+                full_context_str += generated_text + "</think>\n\n"
 
                 self.print_preview(generated_text,300)
 
@@ -316,36 +305,6 @@ class VLLMPlanRouter(LM):
                 text = self.tokenizer_large.decode(ids, skip_special_tokens=False)
             final_text_parts.append(text)
         return "".join(final_text_parts)
-    
-    def _clean_response(self, text: str) -> str:
-        if not text:
-            return ""
-
-        lines = text.split('\n')
-        cleaned_lines = []
-        
-        for line in lines:
-            if not any(keyword in line.lower() for keyword in [
-                'moving on to', 'i realize', 'first off', 'so,', 'therefore',
-                'in summary', 'to find out', 'given that', 'since', 'thus'
-            ]):
-                cleaned_lines.append(line)
-        
-        result = '\n'.join(cleaned_lines)
-
-        import re
-        math_patterns = [
-            r'\\boxed\{[^}]*\}',  
-            r'[A-Za-z\s]*=\s*[0-9.+\-*/()]+\s*', 
-            r'[0-9.+\-*/()]+\s*[=<>]\s*[0-9.+\-*/()]+', 
-        ]
-        
-        for pattern in math_patterns:
-            matches = re.findall(pattern, result)
-            if matches:
-                return matches[-1].strip()
-        
-        return result.strip()
 
     def generate_until(self, requests: List) -> List[str]:
         results = []
@@ -389,7 +348,6 @@ class VLLMPlanRouter(LM):
                 f.write("Routing Statistics:\n")
                 f.write(f"   Total Requests: {total}\n")
                 f.write(f"   Fallbacks: {self.stats['fallback_to_large']}\n")
-                f.write(f"   Tokens for Plan: {self.stats['plan_tokens']}\n")
                 
                 s_tok = self.stats['tokens_generated_by_small']
                 l_tok = self.stats['tokens_generated_by_large']

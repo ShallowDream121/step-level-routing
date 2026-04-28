@@ -121,6 +121,10 @@ class VLLMRANDOM(LM):
 
         random_ratio = 1/(ratio+1)
         if_use_large_model = True if random.random()<random_ratio else False
+
+        if if_use_large_model:
+            self.stats["generate_by_large"] += 1
+
         tokenizer = self.tokenizer_large if if_use_large_model else self.tokenizer_small
         model_name = self.large_model_name if if_use_large_model else self.small_model_name
         url = self.large_url if if_use_large_model else self.small_url
@@ -203,7 +207,7 @@ class VLLMRANDOM(LM):
                 f.write("\n" + "="*40 + "\n")
                 f.write("Routing Statistics:\n")
                 f.write(f"   Total Requests: {total}\n")
-                f.write(f"   Fallbacks: {self.stats['fallback_to_large']}\n")
+                f.write(f"   Fallbacks: {self.stats['generate_by_large']}\n")
                 f.write(f"   Tokens for Plan: {self.stats['plan_tokens']}\n")
                 
                 s_tok = self.stats['tokens_generated_by_small']
