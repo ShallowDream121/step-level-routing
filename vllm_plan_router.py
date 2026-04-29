@@ -54,7 +54,7 @@ class VLLMPlanRouter(LM):
             "- Never re-analyze the original problem from scratch.\n"
             "- Output ONLY the result of the current step. No explanations, no commentary.\n"
             "- End every response with '</think>' (last 7 chars).\n"
-            "- Only use \\boxed{{}} when the current step explicitly demands a final answer."
+            "- Only use \\boxed{} when the current step explicitly demands a final answer."
         )
 
         logger.info(f"Loading Small Model Tokenizer: {small_model_name}...")
@@ -218,6 +218,8 @@ class VLLMPlanRouter(LM):
                 tokenize=False,
                 add_generation_prompt=True
             )
+
+            self.print_preview(current_prompt,200)
 
             try:
                 prompt_tokens = tokenizer_used.encode(current_prompt, add_special_tokens=False)

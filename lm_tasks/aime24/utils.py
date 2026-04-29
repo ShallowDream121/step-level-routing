@@ -52,17 +52,21 @@ def process_results(doc: Dict, results: List[str]):
 
     else:
         answer_patterns = [
-            r"(?:final\s+)?(?:the\s+)?answer(?:\s+is)?[:\s]+(.+?)(?:\.|$)",
-
-            r"(?:therefore|thus|hence|so),?\s+(?:the\s+)?answer(?:\s+is)?[:\s]+(.+?)(?:\.|$)"
+            r"(?i)(?:final\s+)?(?:the\s+)?answer\s*:\s*([^.\n]+)",
+            r"(?i)(?:therefore|thus|hence|so),?\s+(?:the\s+)?answer(?:\s+is)?\s*:\s*([^.\n]+)"
         ]
+        
         for pattern in answer_patterns:
-            match = re.search(pattern, raw_pred, re.IGNORECASE)
-            if match:
-                extracted_answer = match.group(1).strip()
-                if extracted_answer.endswith('.'):
-                    extracted_answer = extracted_answer[:-1]
-                break
+            matches = re.findall(pattern, raw_pred)
+            
+            if matches:
+                last_match_text = matches[-1].strip()
+
+                digit_match = re.match(r"(\d+)", last_match_text)
+                
+                if digit_match:
+                    extracted_answer = digit_match.group(1)
+                    break
     
 
     if extracted_answer is None:

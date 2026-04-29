@@ -208,7 +208,6 @@ class VLLMRANDOM(LM):
                 f.write("Routing Statistics:\n")
                 f.write(f"   Total Requests: {total}\n")
                 f.write(f"   Fallbacks: {self.stats['generate_by_large']}\n")
-                f.write(f"   Tokens for Plan: {self.stats['plan_tokens']}\n")
                 
                 s_tok = self.stats['tokens_generated_by_small']
                 l_tok = self.stats['tokens_generated_by_large']

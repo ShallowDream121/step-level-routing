@@ -211,9 +211,9 @@ class VLLMSteer(LM):
                     "ids": new_token_ids,
                     "source": source
                 })
-                with open(self.log_file_path, mode='a', newline='', encoding='utf-8') as csvfile:
-                    writer = csv.writer(csvfile)
-                    writer.writerow([current_step, f"{confidence:.5f}", source, len(new_token_ids)])
+                #with open(self.log_file_path, mode='a', newline='', encoding='utf-8') as csvfile:
+                #    writer = csv.writer(csvfile)
+                #    writer.writerow([current_step, f"{confidence:.5f}", source, len(new_token_ids)])
 
                 if use_large_model:
                     self.stats["tokens_generated_by_large"] += len(new_token_ids)
