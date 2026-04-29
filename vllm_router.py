@@ -26,10 +26,13 @@ class VLLMRouter(LM):
         small_model_name: str,
         large_model_name: str,
         confidence_threshold: float = 0.7,
-        max_step_tokens: int = 2048,
+        max_step_tokens: int = 512,
         max_gen_tokens: int = 16384,
         step_plan: str = "",
         debug: bool = False,
+        dynamic_block: bool = True,
+        block_tiers: str = "128,256,512,1024,2048",
+        upgrade_steps: int = 1,
         **kwargs
     ):
         super().__init__()
@@ -47,9 +50,25 @@ class VLLMRouter(LM):
         self.max_step_tokens = max_step_tokens
         self.max_gen_tokens = max_gen_tokens
 
-        self.max_steps = int(max_gen_tokens) // int(max_step_tokens) + 10
+        self.dynamic_block = dynamic_block
+        self.upgrade_steps = upgrade_steps
+        self.block_tiers = [int(x.strip()) for x in block_tiers.split(",")]
+        self.block_tiers.sort()
 
-        self.log_file_path = "./confidence/confidence_log_blocks_1024_aime.csv"
+        if self.dynamic_block:
+            initial_tokens = int(max_step_tokens)
+            best_idx = 0
+            best_dist = abs(self.block_tiers[0] - initial_tokens)
+            for i, t in enumerate(self.block_tiers):
+                dist = abs(t - initial_tokens)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_idx = i
+            self._initial_block_idx = best_idx
+        else:
+            self._initial_block_idx = 0
+
+        self.log_file_path = "./confidence/confidence_log_blocks_512_dynamic_aime.csv"
 
         self.eos_tokens = [
             "<｜end▁of▁sentence｜>",
@@ -77,7 +96,6 @@ class VLLMRouter(LM):
             "fallback_to_large": 0,
             "tokens_generated_by_small": 0,
             "tokens_generated_by_large": 0,
-            "prefill_tokens_count": 0
         }
 
     def _clean_eos(self, text: str) -> str:
@@ -163,19 +181,6 @@ class VLLMRouter(LM):
         
         return sum(probs) / len(probs) if probs else 0.0
 
-    def _check_repetition(self, text: str, threshold: float = 0.5) -> bool:
-        """检测文本是否陷入死循环复读"""
-        sentences = re.split(r'[。\n]', text)
-        sentences = [s.strip() for s in sentences if len(s.strip()) > 15]
-        if not sentences:
-            return False
-        counter = Counter(sentences)
-        most_common_count = counter.most_common(1)[0][1]
-        if most_common_count / len(sentences) > threshold:
-            logger.warning(f"!检测到复读！最高频句子重复 {most_common_count} 次")
-            return True
-        return False
-
     def _get_initial_prompt_text(self, messages: List[Dict[str, str]], model_type: str) -> str:
         tokenizer = self.tokenizer_small if model_type == "small" else self.tokenizer_large
         try:
@@ -196,7 +201,10 @@ class VLLMRouter(LM):
             return text
         
     def _run_speculative_routing(self, messages: List[Dict[str, str]], stop_sequences: List[str]) -> str:        
-        logger.info(f"[Routing] 启动 | 最大步数: {self.max_steps} | 阈值: {self.confidence_threshold}")
+        if self.dynamic_block:
+            logger.info(f"[Routing] 启动 | 阈值: {self.confidence_threshold} | 动态Block: {self.block_tiers}")
+        else:
+            logger.info(f"[Routing] 启动 | 阈值: {self.confidence_threshold}")
         
         try:
             initial_model_type = "small"
@@ -205,19 +213,27 @@ class VLLMRouter(LM):
             logger.warning(f"模板渲染失败: {e}")
             current_raw_text = "\n".join([f"{m['role']}: {m['content']}" for m in messages]) + "\nassistant: "
         
-        all_generated_segments = [] 
+        all_generated_segments = []
         step_count = 0
         force_large_model_this_step = False
-        
+
+        current_block_idx = self._initial_block_idx
+        consecutive_good = 0
+
+        if self.dynamic_block:
+            logger.info(f"  初始Block: {self.block_tiers[current_block_idx]} tokens | 升级需连续 {self.upgrade_steps} 步高置信度")
+
         if self.debug:
             print(f"初始 Prompt 长度: {len(current_raw_text)} chars", flush=True)
             self.print_preview(current_raw_text, 200)
 
-        while step_count < self.max_steps:
+        while True:
             current_step = step_count + 1
             use_large_model = force_large_model_this_step
             force_large_model_this_step = False
-            
+
+            current_block_tokens = self.block_tiers[current_block_idx] if self.dynamic_block else self.max_step_tokens
+
             tokenizer_used = self.tokenizer_large if use_large_model else self.tokenizer_small
             url_used = self.large_url if use_large_model else self.small_url
             model_name = self.large_model_name if use_large_model else self.small_model_name
@@ -225,92 +241,54 @@ class VLLMRouter(LM):
             input_ids = tokenizer_used.encode(current_raw_text, add_special_tokens=False)
 
             gen_tokens = 0
-            
-            if len(input_ids) > 32000:
+
+            if len(input_ids) > 30000:
                 logger.warning(f"上下文过长 ({len(input_ids)})，截断尾部...")
-                input_ids = input_ids[-30000:] 
-            if use_large_model:
-                self.stats["prefill_tokens_count"] += len(input_ids)
-                logger.info(f"Step {current_step} [大]: 输入 Tokens={len(input_ids)}")
-            else:
-                logger.info(f"Step {current_step} [小]: 输入 Tokens={len(input_ids)}")
+                input_ids = input_ids[-30000:]
+
+            model_label = "大" if use_large_model else "小"
+            logger.info(f"Step {current_step} [{model_label}]: 输入 Tokens={len(input_ids)}")
 
             generated_text = ""
             new_token_ids = []
             finish_reason = ""
 
-            # ================= 分支 A: 小模型执行 =================
-            if not use_large_model:
-                small_res = self._call_vllm_api(
-                    url=url_used,
-                    model_name=model_name,
-                    prompt_text = current_raw_text,
-                    prompt_token_ids=input_ids,
-                    max_tokens=self.max_step_tokens,
-                    stop_sequences=stop_sequences,
-                    get_logprobs=True,
-                    temperature=0.7,
-                    repetition_penalty=1.15
-                )
-                
-                if small_res and "choices" in small_res:
-                    choice = small_res["choices"][0]
-                    generated_text = choice.get("text", "")
-                    finish_reason = choice.get("finish_reason", "")
-                    new_token_ids = choice.get("token_ids", [])
-                    
-                    if not new_token_ids and generated_text:
-                        new_token_ids = tokenizer_used.encode(generated_text, add_special_tokens=False)
-                    
-                    logprobs_raw = choice.get("logprobs", None)
-                    confidence = self._calculate_confidence(logprobs_raw)
-                    
-                    logger.info(f" 小模型完成 | 置信度: {confidence:.3f} | 原因: {finish_reason or 'EOS'}")
-
-                    if not new_token_ids:
-                        logger.error("   小模型未生成有效 tokens。")
-                        break
-
-                else:
-                    logger.error("  小模型调用失败或返回格式错误")
-                    break
-
-            # ================= 分支 B: 大模型执行 =================
-            else:
+            if use_large_model:
                 self.stats["fallback_to_large"] += 1
-                
-                large_res = self._call_vllm_api(
-                    url=url_used,
-                    model_name=model_name,
-                    prompt_text = current_raw_text,
-                    prompt_token_ids=input_ids,
-                    max_tokens=self.max_step_tokens,
-                    stop_sequences=stop_sequences,
-                    get_logprobs=True,
-                    temperature=0.7,
-                    repetition_penalty=1.15
-                )
-                
-                if large_res and "choices" in large_res:
-                    choice = large_res["choices"][0]
-                    generated_text = choice.get("text", "")
-                    finish_reason = choice.get("finish_reason", "")
-                    new_token_ids = choice.get("token_ids", [])
 
-                    if not new_token_ids and generated_text:
-                        new_token_ids = tokenizer_used.encode(generated_text, add_special_tokens=False)
-                    
-                    logprobs_raw = choice.get("logprobs", None)
-                    confidence = self._calculate_confidence(logprobs_raw)
+            res = self._call_vllm_api(
+                url=url_used,
+                model_name=model_name,
+                prompt_text=current_raw_text,
+                prompt_token_ids=input_ids,
+                max_tokens=current_block_tokens,
+                stop_sequences=stop_sequences,
+                get_logprobs=True,
+                temperature=0.7,
+                repetition_penalty=1.15
+            )
 
-                    logger.info(f"  大模型完成 | 置信度: {confidence:.3f} | 原因: {finish_reason or 'EOS'}")
+            if res and "choices" in res:
+                choice = res["choices"][0]
+                generated_text = choice.get("text", "")
+                finish_reason = choice.get("finish_reason", "")
+                new_token_ids = choice.get("token_ids", [])
 
-                    if not new_token_ids:
-                        logger.error(f"   大模型未生成有效 tokens，终止, 终止原因：{finish_reason} ")
-                        break
-                else:
-                    logger.error("   大模型调用失败，终止。")
+                if not new_token_ids and generated_text:
+                    new_token_ids = tokenizer_used.encode(generated_text, add_special_tokens=False)
+
+                logprobs_raw = choice.get("logprobs", None)
+                confidence = self._calculate_confidence(logprobs_raw)
+
+                logger.info(f" {model_label}模型完成 | 置信度: {confidence:.3f} | 原因: {finish_reason or 'EOS'}")
+
+                if not new_token_ids:
+                    logger.error(f"   {model_label}模型未生成有效 tokens。")
                     break
+
+            else:
+                logger.error(f"  {model_label}模型调用失败或返回格式错误")
+                break
 
             # ================= 更新上下文 =================
             source = 1 if use_large_model else 0
@@ -351,7 +329,20 @@ class VLLMRouter(LM):
                 #with open(self.log_file_path, mode='a', newline='', encoding='utf-8') as csvfile:
                 #    writer = csv.writer(csvfile)
                 #    writer.writerow([current_step, f"{confidence:.5f}", source, len(new_token_ids)])
-                
+
+                if self.dynamic_block:
+                    if confidence > self.confidence_threshold:
+                        consecutive_good += 1
+                        if consecutive_good >= self.upgrade_steps and current_block_idx < len(self.block_tiers) - 1:
+                            current_block_idx += 1
+                            consecutive_good = 0
+                            logger.info(f"   Block ↑ 升至 {self.block_tiers[current_block_idx]} tokens")
+                    else:
+                        consecutive_good = 0
+                        if current_block_idx > 0:
+                            current_block_idx -= 1
+                            logger.info(f"   Block ↓ 降至 {self.block_tiers[current_block_idx]} tokens")
+
                 if not use_large_model and confidence < self.confidence_threshold:
                     logger.info(f"   置信度 ({confidence:.3f}) 低于阈值，*下一步* 切换大模型。")
                     force_large_model_this_step = True
