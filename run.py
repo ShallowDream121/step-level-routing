@@ -153,7 +153,7 @@ def parse_arguments():
 
     # ---- 其他参数 ---
     parser.add_argument(
-        "--debug", action="store_true", default=False,
+        "--debug", action="store_true",
         help="Enable debug mode."
     )
 

@@ -13,6 +13,7 @@ from tqdm import tqdm
 from transformers import AutoTokenizer 
 import re
 from collections import Counter
+from distutils.util import strtobool
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -32,7 +33,7 @@ class VLLMRouter(LM):
         debug: bool = False,
         dynamic_block: bool = True,
         block_tiers: str = "128,256,512,1024,2048",
-        upgrade_steps: int = 1,
+        upgrade_steps: int = 2,
         **kwargs
     ):
         super().__init__()
@@ -40,7 +41,7 @@ class VLLMRouter(LM):
         self.large_url = large_url
         self.small_model_name = small_model_name
         self.large_model_name = large_model_name
-        self.debug = debug
+        self.debug = bool(strtobool(str(debug)))
 
         try:
             self.confidence_threshold = float(confidence_threshold)
@@ -143,7 +144,7 @@ class VLLMRouter(LM):
             payload["stop"] = stop_sequences
 
         try:
-            response = self.session.post(endpoint, json=payload, timeout=300)
+            response = self.session.post(endpoint, json=payload, timeout=None)
             
             if response.status_code == 200:
                 data = response.json()
@@ -340,7 +341,7 @@ class VLLMRouter(LM):
                     else:
                         consecutive_good = 0
                         if current_block_idx > 0:
-                            current_block_idx -= 1
+                            current_block_idx //= 2
                             logger.info(f"   Block ↓ 降至 {self.block_tiers[current_block_idx]} tokens")
 
                 if not use_large_model and confidence < self.confidence_threshold:
@@ -417,7 +418,7 @@ class VLLMRouter(LM):
 
         pbar.close()
         
-        with open("./log_traces/logs/routing_block.log", "a", encoding="utf-8") as f:
+        with open("./log_traces/logs/routing_block_dynamic.log", "a", encoding="utf-8") as f:
             total = self.stats["total_requests"]
             if total > 0:
                 f.write("\n" + "="*40 + "\n")

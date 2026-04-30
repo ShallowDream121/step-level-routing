@@ -7,6 +7,7 @@ from lm_eval.api.instance import Instance
 from lm_eval.api.registry import register_model
 from tqdm import tqdm
 from transformers import AutoTokenizer 
+from distutils.util import strtobool
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ class VLLMRANDOM(LM):
         self.small_model_name = small_model_name
         self.large_url = large_url
         self.large_model_name = large_model_name
-        self.debug = debug
+        self.debug = bool(strtobool(str(debug)))
 
         self.max_gen_tokens = int(max_gen_tokens)
 

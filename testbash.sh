@@ -11,7 +11,7 @@ export VLLM_WORKER_MULTIPROC_METHOD='spawn'
 BIG_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Qwen-7B"
 SMALL_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Qwen-1.5B"
 
-MODE="random" 
+MODE="block" 
 BIG_GPU="0"
 SMALL_GPU="1"
 
@@ -20,10 +20,10 @@ LARGE_PORT=8002
 
 TASKS="aime24_nofigures"
 PLAN="./plans/aime_plans_qwen_max.json"
-OUTPUT_PATH="./log_traces/1.5B-7B-random-aime24/10%-new/"
+OUTPUT_PATH="./log_traces/1.5B-7B-block-dynamic-aime24/512-0.55/"
 
-CONFIDENCE_THRESHOLD=0.57
-MAX_STEP_TOKENS=1024
+CONFIDENCE_THRESHOLD=0.55
+MAX_STEP_TOKENS=512
 MAX_GEN_TOKENS=16384
 LIMIT=""  
 NUM_FEWSHOT=0
@@ -63,7 +63,7 @@ if [ ! -z "$LIMIT" ]; then
 fi
 
 
-CMD+=(--debug)
+#CMD+=(--debug)
 CMD+=(--apply_chat_template)
 
 

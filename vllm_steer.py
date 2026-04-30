@@ -13,6 +13,7 @@ from tqdm import tqdm
 from transformers import AutoTokenizer 
 import re
 from collections import Counter
+from distutils.util import strtobool
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ class VLLMSteer(LM):
         self.large_url = large_url
         self.small_model_name = small_model_name
         self.large_model_name = large_model_name
-        self.debug = debug
+        self.debug = bool(strtobool(str(debug)))
 
         try:
             self.confidence_threshold = float(confidence_threshold)
