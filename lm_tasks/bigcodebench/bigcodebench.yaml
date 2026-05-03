@@ -1,0 +1,28 @@
+task: bigcodebench
+dataset_path: bigcode/bigcodebench
+test_split: train
+output_type: generate_until
+
+doc_to_text: !function utils.doc_to_text
+doc_to_target: "{{canonical_solution}}"
+process_results: !function utils.process_results
+
+metric_list:
+  - metric: pass_at_1
+    aggregation: mean
+    higher_is_better: true
+  - metric: extracted_code!
+    aggregation: bypass
+    higher_is_better: true
+
+generation_kwargs:
+  until: []
+  do_sample: false
+  temperature: 0.7
+  max_gen_toks: 32768
+
+num_fewshot: 0
+
+description: "BigCodeBench code generation evaluation. Recommend --limit 120 for ~2h runs."
+metadata:
+  version: 1.0
