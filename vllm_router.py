@@ -31,8 +31,8 @@ class VLLMRouter(LM):
         max_gen_tokens: int = 16384,
         step_plan: str = "",
         debug: bool = False,
-        dynamic_block: bool = True,
-        block_tiers: str = "128,256,512,1024,2048",
+        dynamic_block: bool = False,
+        block_tiers: str = "512,1024,2048",
         upgrade_steps: int = 2,
         **kwargs
     ):
@@ -69,7 +69,7 @@ class VLLMRouter(LM):
         else:
             self._initial_block_idx = 0
 
-        self.log_file_path = "./confidence/confidence_log_blocks_512_dynamic_aime.csv"
+        self.log_file_path = "./confidence/confidence_log_blocks_512_gpqa.csv"
 
         self.eos_tokens = [
             "<｜end▁of▁sentence｜>",
@@ -243,9 +243,9 @@ class VLLMRouter(LM):
 
             gen_tokens = 0
 
-            if len(input_ids) > 30000:
+            if len(input_ids) > 28000:
                 logger.warning(f"上下文过长 ({len(input_ids)})，截断尾部...")
-                input_ids = input_ids[-30000:]
+                input_ids = input_ids[-27000:]
 
             model_label = "大" if use_large_model else "小"
             logger.info(f"Step {current_step} [{model_label}]: 输入 Tokens={len(input_ids)}")
@@ -312,11 +312,15 @@ class VLLMRouter(LM):
                 clean_segment = self._clean_eos(decoded_segment)
                 current_raw_text += clean_segment
                 
+                #with open(self.log_file_path, mode='a', newline='', encoding='utf-8') as csvfile:
+                #    writer = csv.writer(csvfile)
+                #    writer.writerow([current_step, f"{confidence:.5f}", source, len(new_token_ids)])
+
                 step_count += 1
                 if self.debug:
                     print(f"  已拼接文本 (当前总长: {len(current_raw_text)} chars)", flush=True)
 
-                if "</think>" in clean_segment:
+                if "</think>" in clean_segment or finish_reason == "stop":
                     logger.info("   检测到推理结束 (</think>)，任务完成。")
                     break
                 elif "\\boxed{" in clean_segment:
@@ -326,10 +330,6 @@ class VLLMRouter(LM):
                 if gen_tokens > int(self.max_gen_tokens):
                     logger.info("达到最大tokens生成上限，停止推理。")
                     break
-
-                #with open(self.log_file_path, mode='a', newline='', encoding='utf-8') as csvfile:
-                #    writer = csv.writer(csvfile)
-                #    writer.writerow([current_step, f"{confidence:.5f}", source, len(new_token_ids)])
 
                 if self.dynamic_block:
                     if confidence > self.confidence_threshold:
@@ -341,7 +341,7 @@ class VLLMRouter(LM):
                     else:
                         consecutive_good = 0
                         if current_block_idx > 0:
-                            current_block_idx //= 2
+                            current_block_idx -= 1
                             logger.info(f"   Block ↓ 降至 {self.block_tiers[current_block_idx]} tokens")
 
                 if not use_large_model and confidence < self.confidence_threshold:
@@ -418,7 +418,7 @@ class VLLMRouter(LM):
 
         pbar.close()
         
-        with open("./log_traces/logs/routing_block_dynamic.log", "a", encoding="utf-8") as f:
+        with open("./log_traces/logs/routing_block.log", "a", encoding="utf-8") as f:
             total = self.stats["total_requests"]
             if total > 0:
                 f.write("\n" + "="*40 + "\n")

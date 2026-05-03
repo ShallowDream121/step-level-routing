@@ -18,14 +18,14 @@ SMALL_GPU="1"
 SMALL_PORT=8001
 LARGE_PORT=8002
 
-TASKS="aime24_nofigures"
+TASKS="gpqa_diamond_mine"
 PLAN="./plans/aime_plans_qwen_max.json"
-OUTPUT_PATH="./log_traces/1.5B-7B-block-dynamic-aime24/512-0.55/"
+OUTPUT_PATH="./log_traces/1.5B-7B-block-512-gpqa/new/0.56"
 
-CONFIDENCE_THRESHOLD=0.55
+CONFIDENCE_THRESHOLD=0.56
 MAX_STEP_TOKENS=512
 MAX_GEN_TOKENS=16384
-LIMIT=""  
+LIMIT="--limit 80"  
 NUM_FEWSHOT=0
 BATCH_SIZE="auto"
 
