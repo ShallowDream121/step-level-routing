@@ -1,0 +1,32 @@
+task: livecodebench
+dataset_path: livecodebench/code_generation_lite
+dataset_kwargs:
+  version_tag: release_v4
+  trust_remote_code: true
+test_split: test
+output_type: generate_until
+
+doc_to_text: !function utils.doc_to_text
+doc_to_target: ""
+process_docs: !function utils.process_docs
+process_results: !function utils.process_results
+
+metric_list:
+  - metric: pass_at_1
+    aggregation: mean
+    higher_is_better: true
+  - metric: extracted_code!
+    aggregation: bypass
+    higher_is_better: true
+
+generation_kwargs:
+  until: []
+  do_sample: false
+  temperature: 0.7
+  max_gen_toks: 32768
+
+num_fewshot: 0
+
+description: "LiveCodeBench-Hard: Competitive programming code generation. Filtered to difficulty=hard. ~90-150 problems."
+metadata:
+  version: 1.0

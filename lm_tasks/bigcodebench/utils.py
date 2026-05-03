@@ -15,21 +15,22 @@ logger = logging.getLogger(__name__)
 
 if os.getenv("USE_TEMPLATE", "0") == "1":
     QUERY_TEMPLATE = (
-        "You are a coding expert. Solve the following programming problem by writing correct Python code.\n"
+        "You are a coding expert. Complete the Python function described below.\n"
         "CRITICAL REQUIREMENT:\n"
-        "1. Think step by step about the problem requirements and approach.\n"
-        "2. Write the complete, runnable Python code as your solution.\n"
-        "3. Put your final code inside \\boxed{{}}.\n"
+        "1. Think step by step about what the function needs to do.\n"
+        "2. Write the complete, runnable Python code including the function definition.\n"
+        "3. Put your final code inside \\boxed{{}} using ```python code blocks.\n"
         "4. End your response with </think>\n\n"
         "Example format:\n"
         "<think>\n"
-        "[Step-by-step analysis and reasoning]\n"
+        "[Step-by-step analysis]\n"
         "Therefore, the solution code is \\boxed{{```python\n"
-        "def solution(arg):\n"
-        "    # your implementation\n"
+        "def task_func(args):\n"
+        "    # your implementation here\n"
         "    return result\n"
         "```}} </think>\n\n"
-        "Question: {question}\n"
+        "Requirements: {libs_note}\n"
+        "Question:\n{question}\n"
     )
 else:
     QUERY_TEMPLATE = "{question}"
@@ -38,7 +39,15 @@ print("BIGCODEBENCH QUERY_TEMPLATE:", QUERY_TEMPLATE[:120])
 
 
 def doc_to_text(doc: dict) -> str:
-    return QUERY_TEMPLATE.format(question=doc.get("prompt", ""))
+    question = doc.get("complete_prompt", "")
+    libs = doc.get("libs", "")
+
+    if libs:
+        libs_note = f"You may use the following libraries: {libs}"
+    else:
+        libs_note = "Use only Python standard library unless specified otherwise."
+
+    return QUERY_TEMPLATE.format(question=question, libs_note=libs_note)
 
 
 # ============================================================
@@ -48,7 +57,7 @@ def doc_to_text(doc: dict) -> str:
 def extract_code(text: str) -> str:
     """
     Extract Python code from model output.
-    Priority: \\boxed{...} > markdown code blocks > raw text.
+    Priority: \\boxed{...} > markdown code blocks > code heuristics > raw text.
     """
     # Priority 1: code inside \boxed{}
     boxed_contents = re.findall(
@@ -56,13 +65,12 @@ def extract_code(text: str) -> str:
         text, re.DOTALL,
     )
     if boxed_contents:
-        content = boxed_contents[-1]  # last boxed match
+        content = boxed_contents[-1]
         code_blocks = re.findall(
             r"```(?:python|py)?\s*\n(.*?)```", content, re.DOTALL
         )
         if code_blocks:
             return code_blocks[0].strip()
-        # boxed but no code block - strip common wrappers and return
         stripped = content.strip()
         if stripped.startswith("python") and "\n" in stripped:
             stripped = stripped.split("\n", 1)[1]
@@ -75,62 +83,58 @@ def extract_code(text: str) -> str:
     if code_blocks:
         return code_blocks[-1].strip()
 
-    # Priority 3: try to find code-like content (def/class/import)
-    code_indicators = re.search(
-        r"((?:def\s+\w+|class\s+\w+|import\s+\w+|from\s+\w+\s+import).*)",
-        text, re.DOTALL,
+    # Priority 3: extract code-like content starting from def/class/import
+    code_match = re.search(
+        r"((?:def|class|import|from)\s+\w+[\s\S]*)",
+        text,
     )
-    if code_indicators:
-        return code_indicators.group(1).strip()
+    if code_match:
+        return code_match.group(1).strip()
 
     # Fallback: entire output
     return text.strip()
 
 
 # ============================================================
-# Sandboxed Code Execution
+# Sandboxed Code Execution (unittest-based)
 # ============================================================
 
-SANDBOX_HEADER = """
+EXECUTE_TEMPLATE = """
 import sys
-import signal
-import os
+import unittest
+import io
 
-class _LimitedOut:
-    def __init__(self, limit=100000):
-        self.limit = limit
-        self.written = 0
-    def write(self, s):
-        if self.written < self.limit:
-            sys.__stdout__.write(s)
-            self.written += len(s)
-    def flush(self):
-        sys.__stdout__.flush()
+# Suppress all output during test execution
+sys.stdout = io.StringIO()
+sys.stderr = io.StringIO()
 
-sys.stdout = _LimitedOut()
-sys.stderr = _LimitedOut()
+# --- Generated code ---
+{code}
+
+# --- Test harness ---
+{test}
+
+if __name__ == "__main__":
+    unittest.main(argv=[''], verbosity=0, exit=True)
 """
 
 
 def execute_code(
     code: str,
-    test_code: str,
+    test: str,
     timeout: int = 30,
 ) -> Tuple[bool, str, str]:
-    """
-    Run code + test in a subprocess sandbox.
-    Returns (passed, stdout, stderr).
-    """
+    """Run generated code against unittest-based test harness."""
 
-    if not test_code:
+    if not test:
         return False, "", "No test code provided"
 
-    full_script = f"{SANDBOX_HEADER}\n\n{code}\n\n{test_code}\n"
+    script = EXECUTE_TEMPLATE.format(code=code, test=test)
 
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".py", delete=False, encoding="utf-8"
     ) as f:
-        f.write(full_script)
+        f.write(script)
         tmp_path = f.name
 
     try:
@@ -141,7 +145,7 @@ def execute_code(
             timeout=timeout,
             cwd=tempfile.gettempdir(),
         )
-        passed = result.returncode == 0 and "AssertionError" not in result.stdout and "AssertionError" not in result.stderr
+        passed = result.returncode == 0
         return passed, result.stdout or "", result.stderr or ""
 
     except subprocess.TimeoutExpired:

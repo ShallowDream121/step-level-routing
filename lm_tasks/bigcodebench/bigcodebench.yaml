@@ -1,5 +1,5 @@
 task: bigcodebench
-dataset_path: bigcode/bigcodebench
+dataset_path: bigcode/bigcodebench-hard
 test_split: train
 output_type: generate_until
 
@@ -23,6 +23,6 @@ generation_kwargs:
 
 num_fewshot: 0
 
-description: "BigCodeBench code generation evaluation. Recommend --limit 120 for ~2h runs."
+description: "BigCodeBench-Hard: Challenging code generation evaluation. Run with --limit 120 for ~2h."
 metadata:
   version: 1.0
