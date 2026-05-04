@@ -11,21 +11,21 @@ export VLLM_WORKER_MULTIPROC_METHOD='spawn'
 BIG_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Qwen-7B"
 SMALL_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Qwen-1.5B"
 
-MODE="block" 
+MODE="big_only" 
 BIG_GPU="0"
 SMALL_GPU="1"
 
 SMALL_PORT=8001
 LARGE_PORT=8002
 
-TASKS="gpqa_diamond_mine"
+TASKS="livecodebench"
 PLAN="./plans/aime_plans_qwen_max.json"
-OUTPUT_PATH="./log_traces/1.5B-7B-block-512-gpqa/new/0.56"
+OUTPUT_PATH="./log_traces/7B-only-live/test"
 
 CONFIDENCE_THRESHOLD=0.56
 MAX_STEP_TOKENS=512
 MAX_GEN_TOKENS=16384
-LIMIT="--limit 80"  
+LIMIT="--limit 1"  
 NUM_FEWSHOT=0
 BATCH_SIZE="auto"
 

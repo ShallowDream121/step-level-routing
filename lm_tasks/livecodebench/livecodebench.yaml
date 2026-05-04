@@ -1,7 +1,6 @@
 task: livecodebench
-dataset_path: livecodebench/code_generation_lite
+dataset_path: livecodebench/code_generation
 dataset_kwargs:
-  version_tag: release_v4
   trust_remote_code: true
 test_split: test
 output_type: generate_until

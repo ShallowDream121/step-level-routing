@@ -31,8 +31,8 @@ class VLLMRouter(LM):
         max_gen_tokens: int = 16384,
         step_plan: str = "",
         debug: bool = False,
-        dynamic_block: bool = False,
-        block_tiers: str = "512,1024,2048",
+        dynamic_block: bool = True,
+        block_tiers: str = "64,128,256,512,1024,2048",
         upgrade_steps: int = 2,
         **kwargs
     ):
@@ -341,7 +341,7 @@ class VLLMRouter(LM):
                     else:
                         consecutive_good = 0
                         if current_block_idx > 0:
-                            current_block_idx -= 1
+                            current_block_idx //=2
                             logger.info(f"   Block ↓ 降至 {self.block_tiers[current_block_idx]} tokens")
 
                 if not use_large_model and confidence < self.confidence_threshold:
@@ -418,7 +418,7 @@ class VLLMRouter(LM):
 
         pbar.close()
         
-        with open("./log_traces/logs/routing_block.log", "a", encoding="utf-8") as f:
+        with open("./log_traces/logs/routing_block_dynamic3.log", "a", encoding="utf-8") as f:
             total = self.stats["total_requests"]
             if total > 0:
                 f.write("\n" + "="*40 + "\n")
