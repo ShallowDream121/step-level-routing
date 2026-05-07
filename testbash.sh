@@ -11,21 +11,21 @@ export VLLM_WORKER_MULTIPROC_METHOD='spawn'
 BIG_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Qwen-7B"
 SMALL_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Qwen-1.5B"
 
-MODE="big_only" 
+MODE="small_only" 
 BIG_GPU="0"
 SMALL_GPU="1"
 
 SMALL_PORT=8001
 LARGE_PORT=8002
 
-TASKS="livecodebench"
+TASKS="aime24_nofigures"
 PLAN="./plans/aime_plans_qwen_max.json"
-OUTPUT_PATH="./log_traces/7B-only-live/test"
+OUTPUT_PATH="./log_traces/1.5B-only-aime24/logs/"
 
 CONFIDENCE_THRESHOLD=0.56
 MAX_STEP_TOKENS=512
 MAX_GEN_TOKENS=16384
-LIMIT="--limit 1"  
+LIMIT=""  
 NUM_FEWSHOT=0
 BATCH_SIZE="auto"
 

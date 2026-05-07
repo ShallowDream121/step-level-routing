@@ -60,13 +60,13 @@ echo "==========================================================================
 BASE_OUTPUT="./log_traces"
 
 export MODE="block" 
-export TASKS="aime24_nofigures"
-export OUTPUT_PATH="${BASE_OUTPUT}/1.5B-7B-block-dynamic2-aime24/0.58"
-export CONFIDENCE_THRESHOLD=0.58
+export TASKS="gpqa_diamond_mine"
+export OUTPUT_PATH="${BASE_OUTPUT}/1.5B-7B-block-512-gpqa/new/0.6"
+export CONFIDENCE_THRESHOLD=0.6
 export MAX_STEP_TOKENS=512
-export LIMIT=""  
+export LIMIT="--limit 80"  
 
-for i in {1..2}; do
+for i in {1..5}; do
     echo ">>> 第 $i 次运行"
     execute_eval
     if [ $? -eq 0 ]; then
@@ -76,22 +76,5 @@ for i in {1..2}; do
     fi
 done
 
-#echo ">>> 开始第二阶段"
-#
-#export MODE="block" 
-#export TASKS="gpqa_diamond_mine"
-#export OUTPUT_PATH="${BASE_OUTPUT}/1.5B-7B-block-dynamic-gpqa/test/0.55"
-#export CONFIDENCE_THRESHOLD=0.55
-#export MAX_STEP_TOKENS=512
-#export LIMIT="--limit 80"  
-#
-#for i in {1..5}; do
-#    execute_eval
-#    if [ $? -eq 0 ]; then
-#        echo "第 $i 次运行成功"
-#    else
-#        echo "第 $i 次运行失败"
-#    fi
-#done
 
 echo "全部任务完成！"

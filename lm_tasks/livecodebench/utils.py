@@ -22,16 +22,16 @@ if os.getenv("USE_TEMPLATE", "0") == "1":
         "CRITICAL REQUIREMENT:\n"
         "1. Think step by step about the problem requirements and algorithm.\n"
         "2. Write the complete, runnable Python code as your solution.\n"
-        "3. Put your final code inside \\boxed{{}} using ```python code blocks.\n"
+        "3. Put your final code using ```python code blocks.\n"
         "4. End your response with </think>\n\n"
         "Example format:\n"
         "<think>\n"
         "[Step-by-step analysis]\n"
-        "Therefore, the solution is \\boxed{{```python\n"
+        "Therefore, the solution is ```python\n"
         "def task_func(arg):\n"
         "    # your implementation\n"
         "    return result\n"
-        "```}} </think>\n\n"
+        "``` </think>\n\n"
         "Problem:\n{question}\n"
     )
 else:
@@ -55,14 +55,15 @@ def doc_to_text(doc: dict) -> str:
 # ============================================================
 
 def process_docs(dataset: Dataset) -> Dataset:
-    def _is_hard(doc):
-        return doc.get("difficulty", "") == "hard"
-
-    hard = dataset.filter(_is_hard)
-    logger.info(
-        f"LiveCodeBench-Hard: {len(hard)} problems filtered from {len(dataset)} total"
-    )
-    return hard
+    #def _is_hard(doc):
+    #    return doc.get("difficulty", "") == "hard"
+#
+    #hard = dataset.filter(_is_hard)
+    #logger.info(
+    #    f"LiveCodeBench-Hard: {len(hard)} problems filtered from {len(dataset)} total"
+    #)
+    #return hard
+    return dataset
 
 
 # ============================================================
@@ -74,40 +75,29 @@ def extract_code(text: str) -> str:
     Extract Python code from model output.
     Priority: \\boxed{...} > markdown code blocks > code heuristics > raw text.
     """
-    # Priority 1: code inside \boxed{}
-    boxed_contents = re.findall(
-        r"\\boxed\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}",
-        text, re.DOTALL,
-    )
-    if boxed_contents:
-        content = boxed_contents[-1]
-        code_blocks = re.findall(
-            r"```(?:python|py)?\s*\n(.*?)```", content, re.DOTALL
-        )
-        if code_blocks:
-            return code_blocks[0].strip()
-        stripped = content.strip()
-        if stripped.startswith("python") and "\n" in stripped:
-            stripped = stripped.split("\n", 1)[1]
-        return stripped
+    # Priority 1: \boxed{...}
+    boxed_match = re.search(r"\\boxed{(.*?)}", text, re.DOTALL)
+    if boxed_match:
+        return boxed_match.group(1).strip()
 
-    # Priority 2: standalone markdown code blocks
+    # Priority 2: markdown code blocks
     code_blocks = re.findall(
         r"```(?:python|py)?\s*\n(.*?)```", text, re.DOTALL
     )
     if code_blocks:
         return code_blocks[-1].strip()
 
-    # Priority 3: code-like content
-    code_match = re.search(
-        r"((?:def|class|import|from)\s+\w+[\s\S]*)",
+    # Priority 3: heuristic for def/class/import/from until first blank line
+    code_matches = re.findall(
+        r"((?:def|class|import)\s+\w+.*?)(?=\n\n|\Z)",
         text,
+        re.DOTALL
     )
-    if code_match:
-        return code_match.group(1).strip()
+    if code_matches:
+        return code_matches[-1].strip()
 
+    # Priority 4: fallback
     return text.strip()
-
 
 # ============================================================
 # Entry-point inference

@@ -57,6 +57,8 @@ class VLLMSMAILL(LM):
         prompt_text: str,
         max_tokens: int = 256, 
         stop_sequences: List[str] = None,
+        get_logprobs: bool = True,
+        top_k_logprobs: int = 5,
         temperature: float = 0.7,
     ) -> Optional[Dict]:
         
@@ -71,7 +73,10 @@ class VLLMSMAILL(LM):
             "stream": False,
             "n": 1
         }
-        
+
+        if get_logprobs:
+            payload["logprobs"] = top_k_logprobs
+
         if stop_sequences:
             payload["stop"] = stop_sequences
 
@@ -88,7 +93,10 @@ class VLLMSMAILL(LM):
             else:
                 if response.status_code == 400:
                     err_text = response.text[:150]
-                    logger.warning(f"Error 400: {err_text}")
+                    if "logprobs" in err_text and "max_logprobs" in err_text:
+                        logger.warning(f"Error 400: logprobs limit exceeded.")
+                    else:
+                        logger.warning(f"Error 400: {err_text}")
                 else:
                     logger.warning(f"Error {response.status_code}: {response.text[:100]}")
                 return None
@@ -107,6 +115,20 @@ class VLLMSMAILL(LM):
             )
         except Exception:
             return "\n".join([f"{m['role']}: {m['content']}" for m in messages])
+
+    def _calculate_confidence(self, logprobs_data) -> float:
+        if not logprobs_data:
+            return 0.0
+        
+        probs = []
+        if isinstance(logprobs_data, dict):
+            token_logprobs_list = logprobs_data.get("token_logprobs", [])
+            if token_logprobs_list and all(isinstance(x, (int, float)) for x in token_logprobs_list):
+                valid_logs = [x for x in token_logprobs_list if x is not None]
+                if valid_logs:
+                    probs = [math.exp(float(x)) for x in valid_logs]
+        
+        return sum(probs) / len(probs) if probs else 0.0
 
     def _run_speculative_routing(self, messages: List[Dict[str, str]], stop_sequences: List[str]) -> str:  
         logger.info(f"[Routing] 启动 , 使用小模型:{self.small_model_name}")
@@ -129,6 +151,7 @@ class VLLMSMAILL(LM):
             prompt_text = prompt_text,
             max_tokens=self.max_gen_tokens,
             stop_sequences=stop_sequences,
+            get_logprobs=True,
             temperature=0.7,
         )
         
@@ -141,6 +164,13 @@ class VLLMSMAILL(LM):
             if not new_token_ids and generated_text:
                 new_token_ids = self.tokenizer_small.encode(generated_text, add_special_tokens=False)
             
+            logprobs_raw = choice.get("logprobs", None)
+            confidence = self._calculate_confidence(logprobs_raw)
+
+            with open("./confidence_proms/small_aime", "a", encoding="utf-8") as f:
+                f.write("\n" + "="*40 + "\n")
+                f.write(f"Confidence:{confidence} \n\n")
+
             logger.info(f" 小模型完成 | 原因: {finish_reason or 'EOS'}")
             if not new_token_ids:
                 logger.error("   小模型未生成有效 tokens。")

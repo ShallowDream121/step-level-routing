@@ -31,7 +31,7 @@ class VLLMRouter(LM):
         max_gen_tokens: int = 16384,
         step_plan: str = "",
         debug: bool = False,
-        dynamic_block: bool = True,
+        dynamic_block: bool = False,
         block_tiers: str = "64,128,256,512,1024,2048",
         upgrade_steps: int = 2,
         **kwargs
@@ -69,7 +69,7 @@ class VLLMRouter(LM):
         else:
             self._initial_block_idx = 0
 
-        self.log_file_path = "./confidence/confidence_log_blocks_512_gpqa.csv"
+        self.log_file_path = "./confidence/confidence_log_blocks_1024_gpqa.csv"
 
         self.eos_tokens = [
             "<｜end▁of▁sentence｜>",
@@ -312,6 +312,7 @@ class VLLMRouter(LM):
                 clean_segment = self._clean_eos(decoded_segment)
                 current_raw_text += clean_segment
                 
+                ####
                 #with open(self.log_file_path, mode='a', newline='', encoding='utf-8') as csvfile:
                 #    writer = csv.writer(csvfile)
                 #    writer.writerow([current_step, f"{confidence:.5f}", source, len(new_token_ids)])
@@ -415,15 +416,14 @@ class VLLMRouter(LM):
             except Exception as e:
                 logger.error(f"Error processing request: {e}")
                 results.append("")
-
         pbar.close()
-        
-        with open("./log_traces/logs/routing_block_dynamic3.log", "a", encoding="utf-8") as f:
+        with open("./log_traces/logs/routing_block2.log", "a", encoding="utf-8") as f:
             total = self.stats["total_requests"]
             if total > 0:
                 f.write("\n" + "="*40 + "\n")
                 f.write("Routing Statistics:\n")
                 f.write(f"   Total Requests: {total}\n")
+                f.write(f"   Step_tokens:{self.max_step_tokens};confidence:{self.confidence_threshold}\n")
                 f.write(f"   Fallbacks: {self.stats['fallback_to_large']}\n")
                 
                 s_tok = self.stats['tokens_generated_by_small']

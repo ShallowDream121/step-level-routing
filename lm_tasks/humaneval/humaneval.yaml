@@ -1,4 +1,4 @@
-task: humaneval
+task: humaneval_mine
 dataset_path: openai/openai_humaneval
 test_split: test
 output_type: generate_until
