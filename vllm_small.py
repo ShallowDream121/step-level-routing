@@ -1,5 +1,6 @@
 import requests
 import logging
+import math
 from typing import List, Optional, Dict
 from lm_eval.api.model import LM
 from lm_eval.api.instance import Instance

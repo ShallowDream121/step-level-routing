@@ -11,7 +11,7 @@ export VLLM_WORKER_MULTIPROC_METHOD='spawn'
 BIG_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Qwen-7B"
 SMALL_MODEL="/home/lcy/models/DeepSeek-R1-Distill-Qwen-1.5B"
 
-MODE="small_only" 
+MODE="block" 
 BIG_GPU="0"
 SMALL_GPU="1"
 
@@ -20,7 +20,7 @@ LARGE_PORT=8002
 
 TASKS="aime24_nofigures"
 PLAN="./plans/aime_plans_qwen_max.json"
-OUTPUT_PATH="./log_traces/1.5B-only-aime24/logs/"
+OUTPUT_PATH="./log_traces/1.5B-7B-block-512-aime24/0.56/"
 
 CONFIDENCE_THRESHOLD=0.56
 MAX_STEP_TOKENS=512
