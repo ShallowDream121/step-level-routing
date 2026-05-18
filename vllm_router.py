@@ -227,6 +227,8 @@ class VLLMRouter(LM):
         if self.debug:
             print(f"初始 Prompt 长度: {len(current_raw_text)} chars", flush=True)
             self.print_preview(current_raw_text, 200)
+            with open("./log_traces/dynamic_value_analysis.log", "a", encoding="utf-8") as f:
+                f.write("\n" + "="*40 + "Begin:\n")
 
         while True:
             current_step = step_count + 1
@@ -282,6 +284,10 @@ class VLLMRouter(LM):
                 confidence = self._calculate_confidence(logprobs_raw)
 
                 logger.info(f" {model_label}模型完成 | 置信度: {confidence:.3f} | 原因: {finish_reason or 'EOS'}")
+
+                if self.debug:
+                    with open("./log_traces/dynamic_value_analysis.log", "a", encoding="utf-8") as f:
+                        f.write(f"Confidence: {confidence}; Block_size: {current_block_tokens}\n")
 
                 if not new_token_ids:
                     logger.error(f"   {model_label}模型未生成有效 tokens。")
@@ -362,6 +368,9 @@ class VLLMRouter(LM):
                 break
 
         logger.info(f"[Routing] 结束。总步数: {step_count}")
+        if self.debug:
+            with open("./log_traces/dynamic_value_analysis.log", "a", encoding="utf-8") as f:
+                f.write("\n" + "="*40 + "\n")
         return self._decode_mixed_segments(all_generated_segments)
 
     def apply_chat_template(self, messages: List[Dict[str, str]], **kwargs) -> str:

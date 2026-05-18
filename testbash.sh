@@ -20,9 +20,9 @@ LARGE_PORT=8002
 
 TASKS="aime24_nofigures"
 PLAN="./plans/aime_plans_qwen_max.json"
-OUTPUT_PATH="./log_traces/1.5B-7B-block-512-aime24/0.56/"
+OUTPUT_PATH="./log_traces/1.5B-7B-block-512-aime24/logs/"
 
-CONFIDENCE_THRESHOLD=0.56
+CONFIDENCE_THRESHOLD=0.58
 MAX_STEP_TOKENS=512
 MAX_GEN_TOKENS=16384
 LIMIT=""  
@@ -63,7 +63,7 @@ if [ ! -z "$LIMIT" ]; then
 fi
 
 
-#CMD+=(--debug)
+CMD+=(--debug)
 CMD+=(--apply_chat_template)
 
 
